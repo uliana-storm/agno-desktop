@@ -1,0 +1,13 @@
+{
+  "goal": "Summarize the most recent article from CoinDesk.",
+  "success_markers": [
+    "A concise summary of the main points in the article."
+  ],
+  "constraints": [],
+  "scope": "one-off",
+  "dept": "content",
+  "project_name": "coin-desk-summary",
+  "knowledge_refs": [],
+  "needs_resolution": true,
+  "created": "2026-05-19T17:22:48.945983"
+}

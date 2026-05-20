@@ -1,0 +1,239 @@
+"""Shared agent run executor with Slack streaming support."""
+
+import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+from pathlib import Path
+
+from agno.agent import RunEvent
+
+from bot.tool_debug import format_tool_completion_message
+from server.paths import find_new_deliverable_files, snapshot_deliverable_files
+
+AGENT_RUN_TIMEOUT = 600  # 10 minutes
+
+
+class AgentRunTimeout(Exception):
+    """Raised when an agent run exceeds AGENT_RUN_TIMEOUT seconds."""
+
+
+def run_with_timeout(fn, timeout: int = AGENT_RUN_TIMEOUT):
+    """Run fn in a worker thread; raise AgentRunTimeout if it exceeds timeout."""
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(fn)
+        try:
+            return future.result(timeout=timeout)
+        except FuturesTimeout:
+            raise AgentRunTimeout(f"Agent run exceeded {timeout}s") from None
+
+
+def _stream_agent_run(
+    agent,
+    prompt: str,
+    client,
+    channel: str,
+    thread_ts: str,
+    session_id: str,
+    before: set[Path],
+    t0: float = 0,
+    stream_to_slack: bool = True,
+) -> tuple[str, list[Path], str]:
+    """Execute a streaming agent run (must run inside the timeout worker thread).
+    Returns: (response_text, new_files, handoff_project_name)
+    """
+    full_response = ""
+    first_token = True
+    t_last = None
+    handoff_project = ""
+
+    slack_message_ts = None
+    last_slack_update = time.time()
+    min_update_interval = 1.5
+
+    stream = agent.run(prompt, stream=True, stream_events=True, session_id=session_id)
+    for chunk in stream:
+        t_last = time.time()
+
+        event = getattr(chunk, "event", None)
+        content = getattr(chunk, "content", None)
+        print(f"[EVENT] {event} | {content[:100] if content else ''}")
+        print(f"[CHUNK] event={event} content_len={len(content) if content else 0}")
+
+        if event == RunEvent.run_content and content and isinstance(content, str) and len(content) > 0:
+            if first_token and t0:
+                print(f"[TIMER] first content token: {time.time()-t0:.3f}s", flush=True)
+                first_token = False
+            full_response += content
+
+            if stream_to_slack and full_response.strip():
+                current_time = time.time()
+                time_since_last = current_time - last_slack_update
+                print(
+                    f"[SLACK STREAM] Checking update: time_since_last={time_since_last:.2f}s, "
+                    f"min_interval={min_update_interval}s, msg_ts={slack_message_ts}",
+                    flush=True,
+                )
+                if time_since_last >= min_update_interval:
+                    try:
+                        if slack_message_ts is None:
+                            print(
+                                f"[SLACK STREAM] Posting initial message to {channel}, thread={thread_ts}",
+                                flush=True,
+                            )
+                            result = client.chat_postMessage(
+                                channel=channel,
+                                thread_ts=thread_ts,
+                                text=full_response.strip() + " ▌",
+                            )
+                            slack_message_ts = result.get("ts") if result else None
+                            print(f"[SLACK STREAM] Initial post result: ts={slack_message_ts}", flush=True)
+                        else:
+                            print(
+                                f"[SLACK STREAM] Updating message ts={slack_message_ts}, "
+                                f"len={len(full_response)}",
+                                flush=True,
+                            )
+                            client.chat_update(
+                                channel=channel,
+                                ts=slack_message_ts,
+                                text=full_response.strip() + " ▌",
+                            )
+                            print("[SLACK STREAM] Update sent successfully", flush=True)
+                        last_slack_update = current_time
+                    except Exception as e:
+                        print(f"[SLACK STREAM] ERROR: {type(e).__name__}: {e}", flush=True)
+                        import traceback
+                        print(traceback.format_exc(), flush=True)
+
+        elif event == RunEvent.model_request_completed:
+            print(f"[TIMER] ModelRequestCompleted: {time.time()-t0:.3f}s", flush=True)
+
+        elif event == RunEvent.tool_call_started:
+            tool_name = getattr(getattr(chunk, "tool", None), "tool_name", "unknown")
+            tool_args = getattr(getattr(chunk, "tool", None), "tool_args", None)
+            client.chat_postMessage(
+                channel=channel,
+                thread_ts=thread_ts,
+                text=f"🔧 `{tool_name}` — `{tool_args}`",
+            )
+
+        elif event == RunEvent.tool_call_completed:
+            tool_name = getattr(getattr(chunk, "tool", None), "tool_name", "unknown")
+            tool_obj = getattr(chunk, "tool", None)
+            tool_result = ""
+            if tool_obj:
+                tool_result = (
+                    getattr(tool_obj, "result", "")
+                    or getattr(tool_obj, "content", "")
+                    or getattr(tool_obj, "output", "")
+                    or str(tool_obj)
+                )
+            print(f"[HANDOFF DEBUG] tool_name: {tool_name}", flush=True)
+            print(f"[HANDOFF DEBUG] tool result: {tool_result[:500]}", flush=True)
+            if tool_result and "HANDOFF_READY:" in str(tool_result):
+                try:
+                    handoff_project = str(tool_result).split("HANDOFF_READY:")[1].strip().split()[0]
+                    print(f"[HANDOFF DEBUG] detected handoff project: {handoff_project}", flush=True)
+                except IndexError:
+                    pass
+            debug_text = format_tool_completion_message(tool_name, str(tool_result))
+            client.chat_postMessage(
+                channel=channel,
+                thread_ts=thread_ts,
+                text=debug_text,
+            )
+
+        elif event == RunEvent.run_error:
+            error = getattr(chunk, "content", None) or "unknown error"
+            print(f"[agent error] {error}")
+            client.chat_postMessage(
+                channel=channel,
+                thread_ts=thread_ts,
+                text=f"❌ Error: {error}",
+            )
+
+        elif event == RunEvent.run_content_completed:
+            print(f"[TIMER] RunContentCompleted: {time.time()-t0:.3f}s", flush=True)
+
+    if t_last and t0:
+        print(f"[TIMER] stream ended: {t_last - t0:.3f}s", flush=True)
+
+    if stream_to_slack:
+        if slack_message_ts:
+            try:
+                print(f"[SLACK STREAM] Sending final update to ts={slack_message_ts}", flush=True)
+                client.chat_update(
+                    channel=channel,
+                    ts=slack_message_ts,
+                    text=full_response.strip() or "_(done)_",
+                )
+                print("[SLACK STREAM] Final update sent successfully", flush=True)
+            except Exception as e:
+                print(f"[SLACK STREAM] Final update failed: {e}", flush=True)
+        elif full_response.strip():
+            try:
+                print(f"[SLACK STREAM] No stream message, posting final to {channel}", flush=True)
+                client.chat_postMessage(
+                    channel=channel,
+                    thread_ts=thread_ts,
+                    text=full_response.strip(),
+                )
+                print("[SLACK STREAM] Final message posted", flush=True)
+            except Exception as e:
+                print(f"[SLACK STREAM] Final post failed: {e}", flush=True)
+
+    new_files = find_new_deliverable_files(before)
+    print(f"[find_output_files] Found {len(new_files)} new files: {[str(f) for f in new_files]}", flush=True)
+    return full_response.strip() or "_(no response)_", new_files, handoff_project
+
+
+def run_agent(
+    agent,
+    prompt: str,
+    client,
+    channel: str,
+    thread_ts: str,
+    session_id: str,
+    t0: float = 0,
+    stream_to_slack: bool = True,
+) -> tuple[str, list[Path], str]:
+    """Run an agent with timeout and optional Slack streaming."""
+    before = snapshot_deliverable_files()
+
+    try:
+        return run_with_timeout(
+            lambda: _stream_agent_run(
+                agent, prompt, client, channel, thread_ts, session_id, before, t0, stream_to_slack
+            ),
+        )
+    except AgentRunTimeout:
+        print(f"[timeout] Agent run exceeded {AGENT_RUN_TIMEOUT}s for session {session_id}")
+        client.chat_postMessage(
+            channel=channel,
+            thread_ts=thread_ts,
+            text="⏱️ This query took too long (over 10 minutes). Please try a simpler or more specific query.",
+        )
+        return "_(timed out after 10 minutes)_", [], ""
+
+
+def upload_files(client, channel: str, thread_ts: str | None, files: list[Path]) -> None:
+    """Upload each output file to the Slack conversation."""
+    for path in files:
+        try:
+            client.files_upload_v2(
+                channel=channel,
+                thread_ts=thread_ts,
+                file=str(path),
+                filename=path.name,
+                title=path.name,
+            )
+        except Exception as e:
+            print(f"[slack] Failed to upload {path.name}: {e}")
+
+
+def post_timing_message(client, channel: str, thread_ts: str, elapsed: float) -> None:
+    """Post a separate timing message after a streamed response."""
+    client.chat_postMessage(
+        channel=channel,
+        thread_ts=thread_ts,
+        text=f"_({elapsed:.1f}s)_",
+    )

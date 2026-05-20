@@ -1,0 +1,17 @@
+{
+  "goal": "Replicate the existing Stormrake website using HTML and make it dynamic to allow for future content changes/twists.",
+  "success_markers": [
+    "Functional HTML replication of current site design.",
+    "Dynamic capabilities implemented for easy updates."
+  ],
+  "constraints": [
+    "Replicate existing Stormrake website design exactly.",
+    "Use HTML for the build."
+  ],
+  "scope": "ongoing",
+  "dept": "other",
+  "project_name": "stormrake-website-replication",
+  "knowledge_refs": [],
+  "needs_resolution": true,
+  "created": "2026-05-20T13:30:08.831343"
+}

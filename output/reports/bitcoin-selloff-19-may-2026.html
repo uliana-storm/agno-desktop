@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Digital Asset Market Update</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background-color: #f8f9fa;
+      color: #1a1a2e;
+      line-height: 1.7;
+    }
+
+    .container {
+      max-width: 700px;
+      margin: 40px auto;
+      padding: 0 20px;
+    }
+
+    .header {
+      text-align: center;
+      padding-bottom: 32px;
+      border-bottom: 1px solid #e0e0e0;
+      margin-bottom: 36px;
+    }
+
+    .brand-name {
+      font-size: 14px;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      color: #8b5cf6;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    .report-title {
+      font-size: 22px;
+      font-weight: 700;
+      color: #1a1a2e;
+      letter-spacing: -0.3px;
+      line-height: 1.3;
+    }
+
+    .date-line {
+      margin-top: 8px;
+      font-size: 13px;
+      color: #6b7280;
+      letter-spacing: 0.5px;
+    }
+
+    .section {
+      margin-bottom: 36px;
+    }
+
+    .section-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: #8b5cf6;
+      font-weight: 700;
+      margin-bottom: 14px;
+    }
+
+    .section-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: #1a1a2e;
+      letter-spacing: -0.2px;
+    }
+
+    .lead-paragraph {
+      margin-top: 12px;
+      font-size: 15px;
+      color: #374151;
+      line-height: 1.8;
+    }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-top: 20px;
+    }
+
+    .metric-card {
+      background: #ffffff;
+      border: 1px solid #e5e7eb;
+      padding: 20px;
+      border-radius: 8px;
+    }
+
+    .metric-value {
+      font-size: 24px;
+      font-weight: 700;
+      color: #dc2626;
+      letter-spacing: -0.5px;
+    }
+
+    .metric-label {
+      margin-top: 4px;
+      font-size: 13px;
+      color: #6b7280;
+    }
+
+    .metric-card.positive {
+      border-color: #e5e7eb;
+    }
+
+    .metric-card.negative {
+      border-left: 3px solid #dc2626;
+    }
+
+    .bullet-list {
+      margin-top: 16px;
+      list-style: none;
+    }
+
+    .bullet-list li {
+      position: relative;
+      padding-left: 20px;
+      margin-bottom: 14px;
+      font-size: 15px;
+      color: #374151;
+      line-height: 1.7;
+    }
+
+    .bullet-list li::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 8px;
+      width: 6px;
+      height: 6px;
+      background-color: #8b5cf6;
+      border-radius: 50%;
+    }
+
+    .key-level {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      margin-top: 16px;
+      padding: 16px 20px;
+      background: #ffffff;
+      border-radius: 8px;
+      border: 1px solid #e5e7eb;
+    }
+
+    .key-level-label {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: #6b7280;
+      white-space: nowrap;
+    }
+
+    .key-level-value {
+      font-size: 20px;
+      font-weight: 700;
+      color: #1a1a2e;
+    }
+
+    .divider {
+      height: 1px;
+      background-color: #e0e0e0;
+      margin: 36px 0;
+    }
+
+    .quote-block {
+      margin-top: 20px;
+      padding: 20px 24px;
+      background: #f8f9fa;
+      border-left: 3px solid #8b5cf6;
+      font-size: 15px;
+      color: #374151;
+      line-height: 1.7;
+      font-style: italic;
+    }
+
+    .quote-attribution {
+      margin-top: 10px;
+      font-style: normal;
+      font-size: 13px;
+      color: #6b7280;
+    }
+
+    .risk-warning {
+      margin-top: 40px;
+      padding: 20px 24px;
+      background: #fffbeb;
+      border-radius: 8px;
+      font-size: 13px;
+      color: #92400e;
+      line-height: 1.7;
+    }
+
+    .risk-warning-label {
+      font-weight: 600;
+      margin-bottom: 6px;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .footer {
+      padding-top: 32px;
+      border-top: 1px solid #e0e0e0;
+    }
+
+    .footer-text {
+      font-size: 12px;
+      color: #9ca3af;
+      line-height: 1.6;
+    }
+
+    @media (max-width: 600px) {
+      .container { margin-top: 24px; }
+      .metric-grid { grid-template-columns: 1fr; }
+      .key-level { flex-direction: column; gap: 4px; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+
+  <div class="header">
+    <div class="brand-name">Stormrake</div>
+    <h1 class="report-title">Digital Asset Market Update</h1>
+    <p class="date-line">19-MAY-2026 &mdash; Bitcoin Selloff and ETF Flows</p>
+  </div>
+
+  <!-- Overview -->
+  <div class="section">
+    <div class="section-label">Overview</div>
+    <h2 class="section-title">Bitcoin Drops Approximately 6% in Recent Days</h2>
+    <p class="lead-paragraph">
+      Bitcoin has fallen from approximately $82,000 to $76,800 over the past several days. Market indicators suggest this correction may extend beyond a routine pullback, with both institutional flows and derivatives data pointing to continued seller dominance.
+    </p>
+
+    <div class="metric-grid">
+      <div class="metric-card negative">
+        <div class="metric-value">$76,800</div>
+        <div class="metric-label">Current Price (USD)</div>
+      </div>
+      <div class="metric-card negative">
+        <div class="metric-value">−6%</div>
+        <div class="metric-label">Recent Decline</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ETF Outflows -->
+  <div class="section">
+    <div class="section-label">ETF Flows</div>
+    <h2 class="section-title">Spot Bitcoin ETFs See Largest Single-Day Outflow Since January</h2>
+    <p class="lead-paragraph">
+      The 11 U.S.-listed spot Bitcoin exchange-traded funds have recorded over $1.5 billion in cumulative net outflows since May 7. On Monday, the largest single-day outflow of $649 million occurred — the biggest since January this year.
+    </p>
+
+    <div class="metric-grid">
+      <div class="metric-card negative">
+        <div class="metric-value">$1.5B</div>
+        <div class="metric-label">Cumulative Outflows (Since May 7)</div>
+      </div>
+      <div class="metric-card negative">
+        <div class="metric-value">−$649M</div>
+        <div class="metric-label">Single-Day Outflow (19-May)</div>
+      </div>
+    </div>
+
+    <p class="lead-paragraph" style="margin-top: 20px;">
+      Spot ETFs are now in a net outflow position for May ($396 million), reversing the inflow trend seen earlier this year.
+    </p>
+  </div>
+
+  <!-- Market Dynamics -->
+  <div class="section">
+    <div class="section-label">Market Dynamics</div>
+    <h2 class="section-title">Seller Dominance Across Spot and Derivatives Markets</h2>
+
+    <ul class="bullet-list">
+      <li><strong>Cumulative Volume Delta (CVD) — Spot Market:</strong> Shifted from positive $16.9 million to negative $126.2 million, indicating sustained seller pressure through market orders.</li>
+      <li><strong>CVD — Perpetual Futures:</strong> Dropped to negative $368.5 million, confirming aggressive short positioning in derivatives markets.</li>
+      <li><strong>Options Hedging Activity:</strong> Put option premiums have risen and delta skew increased from 10.9% to 14.4%, suggesting options traders are pricing in greater downside risk.</li>
+    </ul>
+  </div>
+
+  <!-- Key Levels -->
+  <div class="section">
+    <div class="section-label">Key Levels</div>
+    <h2 class="section-title">Support Zones to Watch</h2>
+    <p class="lead-paragraph">
+      Traders are monitoring two primary support areas:
+    </p>
+
+    <div class="key-level">
+      <span class="key-level-label">First Support</span>
+      <span class="key-level-value">$76,000</span>
+    </div>
+
+    <div class="key-level" style="margin-top: 12px;">
+      <span class="key-level-label">Major Buying Zone</span>
+      <span class="key-level-value">$74,000 – $75,000</span>
+    </div>
+
+    <div class="quote-block">
+      "Bitcoin could enter deeper correction territory if the $76,000 level gives way." — Vikram Subburaj, CEO of Giottus
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- Sources -->
+  <div class="section">
+    <div class="section-label">Sources</div>
+    <ul class="bullet-list">
+      <li>CoinDesk — "Bitcoin has shed $5,000 within days. The data says this selloff could worsen" (19-May-2026)</li>
+      <li>The Block — "Spot bitcoin ETFs log $649 million in net outflows, largest since January" (19-May-2026)</li>
+    </ul>
+  </div>
+
+  <!-- Risk Warning -->
+  <div class="risk-warning">
+    <div class="risk-warning-label">Risk Warning</div>
+    Digital assets are volatile and carry significant risk. Past performance is not indicative of future results. You may lose some or all of your investment. This information is general in nature and does not take into account your personal objectives, financial situation, or needs. Before acting, consider whether this information is appropriate for your circumstances and seek independent advice if necessary.
+  </div>
+
+  <!-- Footer -->
+  <div class="footer">
+    <p class="footer-text">
+      This report was prepared by Stormrake as general market commentary. It is not investment guidance or a recommendation to buy, sell, or hold any digital asset. In the United States, digital asset services are provided by Zero Hash LLC and Zero Hash Liquidity Services LLC.<br><br>
+      © 2026 Stormrake Pty Ltd. All rights reserved.
+    </p>
+  </div>
+
+</div>
+
+</body>
+</html>
