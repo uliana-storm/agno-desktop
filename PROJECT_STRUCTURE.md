@@ -146,6 +146,10 @@ Active project tracking and workfiles.
 | `slack_report_blocks.py` | Block Kit builder for EOD reports |
 | `slack_read_tool.py` | `get_messages_since_today`, `search_slack_messages` (complements Agno SlackTools) |
 | `workfile_config.py` | EOD project workfile config JSON read/write + channel auto-enroll |
+| `tony_file_toolkits.py` | Scoped `read_file` / `save_file` / `list_files` / `search_files` with `scope` arg |
+| `create_project_schedule_tool.py` | Deterministic recurring cron + payload for Tony |
+| `scheduler_tools_config.py` | `BlockedCreateSchedulerTools` — `create_schedule` disabled on both agents |
+| `schedule_reminder_tool.py` | One-shot Jarvis reminders (`schedule_reminder_in_minutes`) |
 
 ---
 
@@ -183,7 +187,6 @@ Both the Slack bot and AgentOS scheduled runs (when `slack_channel` + `thread_ts
 |------|---------|
 | `compare_models.py` | Run same task across local models (qwopus, qwopus-glm, gemma, qwen) |
 | `weekly_report.py` | Stub for weekly Tony status report to `output/reports/` |
-| `migrate_paths.py` | One-time migration for legacy `output/output/` and misplaced workfiles |
 | `token_audit.py` | Diagnose prompt token sizes for Jarvis/Tony configurations |
 | `verify_agent_os.py` | Step 0 check — AgentOS health, `/schedules` API, jarvis/tony registration |
 | `start_live_test.sh` | Start AgentOS + Slack bot + web server; health checks; `tail -f` combined logs on the terminal |
@@ -214,7 +217,7 @@ Separate Next.js project (`package.json`, `tsconfig.json`, `components.json`, `.
 |--------|-----------------|-----------------|
 | **Role** | First contact, KB answers, project intake, reminders | Research, writing, analysis, file creation |
 | **Model** | Port 8082 (Qwopus-GLM-18B) | Port 8081 (Qwopus 35B) |
-| **Tools** | FileTools, handoff, post_to_slack, SchedulerTools | Search, news, CoinGecko, Python, FileTools, post_to_slack, SchedulerTools |
+| **Tools** | Scoped files (read-only), handoff, `schedule_reminder_in_minutes`, scheduler list/manage, Slack | Search, news, CoinGecko, Python, scoped files (incl. save on `projects`), `create_project_schedule`, scheduler list/manage, Slack |
 | **Writes to** | Nothing (handoff tool writes project dirs) | `output/`, `projects/` workfiles |
 | **Memory DB** | `memory/jarvis_memory.db` | `memory/tony_memory.db` |
 | **Session ID** | `jarvis-{slack_user_id}` | `tony-{slack_user_id}-{thread_ts}` |
@@ -250,10 +253,12 @@ Live Slack traffic uses `agent.run()` directly in the bot. Scheduled runs are pe
 
 | Tool | Source | Agent |
 |------|--------|-------|
-| File | `agno.tools.file` | Both (different permissions) |
+| read_file / save_file / list_files / search_files | `tools/tony_file_toolkits.py` | Both (Tony: save on `projects` only) |
 | handoff_to_tony | `tools/handoff_tool.py` | Jarvis |
+| schedule_reminder_in_minutes | `tools/schedule_reminder_tool.py` | Jarvis |
+| create_project_schedule | `tools/create_project_schedule_tool.py` | Tony |
 | post_to_slack | `tools/slack_notify_tool.py` | Both |
-| SchedulerTools | `agno.tools.scheduler` | Both |
+| list_schedules, enable/disable, … | `tools/scheduler_tools_config.py` | Both (`create_schedule` blocked) |
 | Brave Search | `tools/brave_search_tool.py` | Tony |
 | NewsFeed | `tools/feed_fetch_tool.py` | Tony |
 | CoinGecko | `tools/coingecko_tool.py` | Tony |
@@ -294,7 +299,10 @@ Optional:
 SLACK_USER_TOKEN=xoxp-...            # User token for search_slack_messages workspace search (search:read scope)
 AGENT_OS_HOST=127.0.0.1           # AgentOS bind host (default 127.0.0.1)
 AGENT_OS_PORT=7777                # AgentOS port (default 7777)
+AGENT_DEBUG=1                     # Verbose stream/tool debug logs in slack_bot
 ```
+
+**Projects:** `projects/index.md` is a registry template only until Tony creates projects (Tony appends `## project-name` after each new workfile). Schedules persist in local `agno.db` (not in git).
 
 ---
 

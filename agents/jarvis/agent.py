@@ -10,7 +10,6 @@ Jarvis is the first point of contact. It:
 
 import os
 import sys
-from pathlib import Path
 from typing import Optional
 
 # Add parent directory to path so tools can be imported
@@ -20,9 +19,7 @@ if str(_parent_dir) not in sys.path:
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb  # TODO: upgrade to SqliteStorage when available
-from agno.tools.file import FileTools
 from agno.tools.function import Function as FunctionTool
-from agno.tools.scheduler import SchedulerTools
 from agno.compression import CompressionManager
 from agno.utils.log import log_info
 
@@ -32,8 +29,9 @@ from agents.task_context import (
     melbourne_datetime_context,
 )
 from server.paths import JARVIS_MEMORY_DB
-from server.scheduler_db import get_scheduler_db
 from tools.handoff_tool import handoff_to_tony
+from tools.scheduler_tools_config import jarvis_scheduler_tools
+from tools.tony_file_toolkits import jarvis_file_toolkit
 from tools.schedule_reminder_tool import schedule_reminder_in_minutes
 from tools.slack_notify_tool import post_to_slack
 from tools.slack_read_tool import SlackReadToolkit
@@ -153,8 +151,7 @@ def create_jarvis_agent(
         instructions=instructions_text,  # Rendered AFTER memories/summaries
         session_state=session_state,
         tools=[
-            FileTools(base_dir=Path("knowledge")),
-            FileTools(base_dir=Path("projects"), enable_save_file=False),
+            jarvis_file_toolkit(),
             jarvis_slack_tools(),
             SlackReadToolkit(),
             FunctionTool(name="handoff_to_tony", entrypoint=handoff_to_tony),
@@ -163,11 +160,7 @@ def create_jarvis_agent(
                 entrypoint=schedule_reminder_in_minutes,
             ),
             FunctionTool(name="post_to_slack", entrypoint=post_to_slack),
-            SchedulerTools(
-                db=get_scheduler_db(),
-                default_endpoint="/agents/jarvis/runs",
-                default_timezone="Australia/Melbourne",
-            ),
+            jarvis_scheduler_tools(),
         ],
         db=db,  # Use the db instance created above
         session_id=session_id,

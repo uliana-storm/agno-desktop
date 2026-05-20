@@ -6,3 +6,6 @@ __pycache__/
 .venv/
 .pytest_cache/
 *.db
+memory/*.db
+memory/active_threads.json
+output/reports/*.html

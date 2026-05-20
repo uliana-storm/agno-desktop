@@ -102,9 +102,28 @@ def _summarize_slack_json(tool_name: str, data: dict | list) -> str:
     return json.dumps(data, indent=2)[:_PREVIEW_MAX]
 
 
-def format_tool_completion_message(tool_name: str, tool_result: str) -> str:
-    """Build Slack debug text showing what the tool returned."""
+def format_tool_completion_message(tool_name: str, tool_result: str) -> str | None:
+    """Build Slack debug text showing what the tool returned.
+
+    Returns None for internal signals that must not appear in Slack (e.g. handoff).
+    """
     raw = str(tool_result or "").strip()
+    if tool_name == "handoff_to_tony" or raw.startswith("HANDOFF_READY:"):
+        return None
+    if tool_name == "create_schedule" and "Use create_project_schedule" in raw:
+        return None
+    if tool_name == "create_project_schedule":
+        try:
+            data = json.loads(raw)
+            if data.get("status") == "created":
+                name = data.get("name", "?")
+                cron = data.get("cron", "?")
+                tz = data.get("timezone", "")
+                return f"✅ `{tool_name}`\nSchedule *{name}* — `{cron}` ({tz})".strip()
+            if data.get("error"):
+                return f"❌ `{tool_name}`\n{data['error']}"
+        except json.JSONDecodeError:
+            pass
     if not raw:
         return f"✅ `{tool_name}` completed _(empty result)_"
 
@@ -113,7 +132,12 @@ def format_tool_completion_message(tool_name: str, tool_result: str) -> str:
         try:
             parsed = json.loads(raw)
             if isinstance(parsed, list):
-                preview = _summarize_slack_json("get_channel_history", parsed)
+                if tool_name == "list_channels" or (
+                    parsed and isinstance(parsed[0], dict) and "name" in parsed[0] and "id" in parsed[0]
+                ):
+                    preview = _summarize_slack_json("list_channels", parsed)
+                else:
+                    preview = _summarize_slack_json("get_channel_history", parsed)
             elif tool_name in _SLACK_READ_TOOLS:
                 preview = _summarize_slack_json(tool_name, parsed)
             elif isinstance(parsed, dict):

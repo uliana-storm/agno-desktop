@@ -94,11 +94,10 @@ from agno.os import AgentOS
 from agents.jarvis.agent import create_jarvis_agent
 from agents.task_context import eod_run_instructions, slack_location_context, task_context
 from agents.tony.agent import create_tony_agent
-from server.paths import JARVIS_MEMORY_DB, TONY_MEMORY_DB, ensure_dirs, migrate_legacy_paths
+from server.paths import JARVIS_MEMORY_DB, TONY_MEMORY_DB, ensure_dirs
 from server.scheduler_db import get_scheduler_db
 
 ensure_dirs()
-migrate_legacy_paths()
 
 # Patch scheduler lifespan before AgentOS is constructed
 import agno.os.app as agno_app
@@ -212,6 +211,16 @@ def _build_tony(ctx: RequestContext) -> Agent:
 
     slack_channel = data.get("slack_channel", "")
     thread_ts = data.get("thread_ts", "")
+    if project and project != "current" and (not slack_channel or not thread_ts):
+        from tools.create_project_schedule_tool import _load_handoff
+
+        handoff = _load_handoff(project)
+        if not slack_channel and handoff.get("slack_channel"):
+            slack_channel = str(handoff["slack_channel"])
+            log_info(f"[factory:tony] slack_channel from handoff.json: {slack_channel}")
+        if not thread_ts and handoff.get("thread_ts"):
+            thread_ts = str(handoff["thread_ts"])
+            log_info(f"[factory:tony] thread_ts from handoff.json: {thread_ts}")
 
     log_info(f"[factory:tony] session_id={session_id} type=scheduled_run project={project}")
     log_info(f"[factory:tony] slack_channel={slack_channel}, thread_ts={thread_ts}")

@@ -19,10 +19,8 @@ if str(_parent_dir) not in sys.path:
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb  # TODO: upgrade to SqliteStorage when available
-from agno.tools.file import FileTools
 from agno.tools.file_generation import FileGenerationTools
 from agno.tools.function import Function as FunctionTool
-from agno.tools.scheduler import SchedulerTools
 from agno.compression import CompressionManager
 from agno.utils.log import log_info
 
@@ -30,14 +28,16 @@ from agents.guidance import load_guidance_files
 from agents.llm_logger import LoggedOpenAILike
 from agents.task_context import eod_run_instructions, task_context
 from server.paths import OUTPUT_DIR, PROJECTS_DIR, REPORTS_DIR, TONY_MEMORY_DB
-from server.scheduler_db import get_scheduler_db
 from tools.brave_search_tool import BraveSearchToolkit
 from tools.coingecko_tool import CoinGeckoToolkit
 from tools.feed_fetch_tool import NewsFeedToolkit
 from tools.python_sandbox import SandboxPythonTools
 from tools.slack_blocks_tool import post_eod_report
 from tools.slack_notify_tool import post_to_slack
+from tools.create_project_schedule_tool import create_project_schedule
+from tools.scheduler_tools_config import tony_scheduler_tools
 from tools.slack_tools_config import tony_slack_tools
+from tools.tony_file_toolkits import file_path_guide, tony_file_toolkits
 
 
 def load_prompt() -> str:
@@ -111,7 +111,7 @@ def create_tony_agent(
         session_state["_slack_thread_ts"] = thread_ts
         print("[tony] STORING slack context in session_state for persistence")
 
-    full_context = core_context + workfile_context
+    full_context = core_context + file_path_guide() + workfile_context
     if additional_context:
         full_context += f"\n\n## Task Context\n{additional_context}"
 
@@ -168,6 +168,27 @@ def create_tony_agent(
     )
     log_info(f"[factory:tony] model_url={model.base_url} session_id={session_id}")
 
+    tools: list = [
+        BraveSearchToolkit(
+            api_key=os.environ.get("BRAVE_API_KEY", ""),
+        ),
+        NewsFeedToolkit(),
+        CoinGeckoToolkit(
+            api_key=os.environ.get("COINGECKO_API_KEY", ""),
+        ),
+        SandboxPythonTools(base_dir=Path(OUTPUT_DIR)),
+        *tony_file_toolkits(),
+        FileGenerationTools(output_directory=str(REPORTS_DIR)),
+        tony_slack_tools(),
+        FunctionTool(name="post_eod_report", entrypoint=post_eod_report),
+        FunctionTool(name="post_to_slack", entrypoint=post_to_slack),
+        FunctionTool(
+            name="create_project_schedule",
+            entrypoint=create_project_schedule,
+        ),
+        tony_scheduler_tools(),
+    ]
+
     return Agent(
         name="Tony",
         model=model,
@@ -175,32 +196,7 @@ def create_tony_agent(
         additional_context=full_context,
         instructions=instructions_text,
         session_state=session_state,
-        tools=[
-            BraveSearchToolkit(
-                api_key=os.environ.get("BRAVE_API_KEY", ""),
-            ),
-            NewsFeedToolkit(),
-            CoinGeckoToolkit(
-                api_key=os.environ.get("COINGECKO_API_KEY", ""),
-            ),
-            SandboxPythonTools(base_dir=Path(OUTPUT_DIR)),
-            FileTools(base_dir=Path(OUTPUT_DIR)),
-            FileTools(base_dir=Path("knowledge"), enable_save_file=False),
-            FileTools(base_dir=Path(PROJECTS_DIR)),
-            FileGenerationTools(output_directory=str(REPORTS_DIR)),
-            tony_slack_tools(),
-            FunctionTool(name="post_eod_report", entrypoint=post_eod_report),
-            FunctionTool(name="post_to_slack", entrypoint=post_to_slack),
-            SchedulerTools(
-                db=get_scheduler_db(),
-                default_endpoint="/agents/tony/runs",
-                default_timezone="Australia/Melbourne",
-                default_payload={
-                    "message": "Continue project work per the workfile and brief.",
-                    "factory_input": '{"project": "current"}',
-                },
-            ),
-        ],
+        tools=tools,
         db=db,
         session_id=session_id,
         add_history_to_context=True,

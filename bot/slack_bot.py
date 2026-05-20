@@ -97,13 +97,15 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 from agents.jarvis.agent import create_jarvis_agent
 from agents.tony.agent import create_tony_agent
 from agents.task_context import (
+    handoff_schedule_context,
     looks_like_scheduling_request,
     scheduling_datetime_context,
     slack_location_context,
+    tony_slack_instructions,
 )
 from bot.agent_runner import post_timing_message, run_agent, upload_files
 from bot.router import route, register_thread
-from server.paths import OUTPUT_DIR, ensure_dirs, migrate_legacy_paths
+from server.paths import OUTPUT_DIR, ensure_dirs
 from tools.workfile_config import append_channel, workfile_exists
 
 
@@ -118,7 +120,6 @@ SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN", "")
 SLACK_APP_TOKEN = os.environ.get("SLACK_APP_TOKEN", "")
 
 ensure_dirs()
-migrate_legacy_paths()
 
 app = App(
     token=SLACK_BOT_TOKEN,
@@ -165,7 +166,7 @@ def build_tony_handoff_prompt(project_name: str, handoff_data: dict, user_prompt
         return (
             "Task: eod_report_init. Read handoff.json and execute the EOD Report Project init steps in "
             "your prompt: list_channels, create projects/slack_eod_report/workfile.md with config JSON, "
-            "create_schedule for weekday 5pm Australia/Melbourne, confirm via send_message_thread."
+            "create_project_schedule for weekday 5pm Australia/Melbourne; confirm in one streamed line only."
         )
     if task == "eod_report_adjust":
         return (
@@ -173,8 +174,11 @@ def build_tony_handoff_prompt(project_name: str, handoff_data: dict, user_prompt
             f"projects/slack_eod_report/workfile.md config per their request. Confirm the change."
         )
     return (
-        f"New project handoff received. Read the handoff.json, create or update "
-        f"projects/{project_name}/workfile.md per your schema, then acknowledge what you'll be working on."
+        f"New project handoff received. Read handoff.json, create or update "
+        f"{project_name}/workfile.md via save_file(scope=projects, path=...) — no projects/ prefix in path. "
+        f"If scope is ongoing and timing was specified, call create_project_schedule with "
+        f"slack_channel and thread_ts from ## Slack location. "
+        f"Confirm in one short streamed message only — do not call post_to_slack."
     )
 
 
@@ -242,6 +246,9 @@ def handle_message(body: dict, client, say) -> None:
                 additional_context = prepend_slack_location(
                     additional_context, channel, thread_ts, tony_session_id
                 )
+                if project and project.get("handoff"):
+                    additional_context += handoff_schedule_context(project["handoff"])
+                additional_context += tony_slack_instructions()
 
                 tony = create_tony_agent(
                     session_id=tony_session_id,
@@ -315,15 +322,8 @@ def handle_message(body: dict, client, say) -> None:
 
             if handoff_project:
                 project_name = handoff_project
-                print(f"[HANDOFF DEBUG] handoff detected from tool result: {project_name}", flush=True)
 
                 register_thread(thread_ts, project_name)
-
-                client.chat_postMessage(
-                    channel=channel,
-                    thread_ts=thread_ts,
-                    text=f"Handed off to Tony for project **{project_name}**. He'll read up and get back to you shortly.",
-                )
 
                 tony_session_id = f"tony-{user_id}-{thread_ts}"
                 handoff_path = f"projects/{project_name}/handoff.json"
@@ -337,6 +337,8 @@ def handle_message(body: dict, client, say) -> None:
                 handoff_context = prepend_slack_location(
                     handoff_context, channel, thread_ts, tony_session_id
                 )
+                handoff_context += handoff_schedule_context(handoff_data)
+                handoff_context += tony_slack_instructions()
 
                 tony = create_tony_agent(
                     session_id=tony_session_id,
