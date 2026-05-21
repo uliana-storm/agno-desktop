@@ -1,1 +1,1 @@
-# Stormrake Projects Index## hyperliquid-research-task## hyperliquid-research-task
+# Stormrake Projects Index
