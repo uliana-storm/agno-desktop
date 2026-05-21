@@ -207,14 +207,6 @@ def handle_message(body: dict, client, say) -> None:
         say(text="What would you like me to help you with?", thread_ts=thread_ts)
         return
 
-    if len(prompt) < 10:
-        client.chat_postMessage(
-            channel=channel,
-            thread_ts=thread_ts,
-            text="⚠️ Please provide a more detailed query (at least 10 characters).",
-        )
-        return
-
     routing = route(prompt, thread_ts)
     print(f"[TIMER] after routing: {time.time()-t0:.3f}s", flush=True)
     target_agent = routing["agent"]

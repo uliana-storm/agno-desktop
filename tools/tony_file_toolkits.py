@@ -1,7 +1,9 @@
 """Scoped file tools — one read_file / save_file API with an explicit scope."""
 
+import base64
+import codecs
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
 
 from agno.tools import Toolkit
 from agno.tools.file import FileTools
@@ -16,6 +18,10 @@ _SCOPES: dict[str, tuple[Path, tuple[str, ...]]] = {
     "output": (OUTPUT_DIR, ("output/",)),
 }
 
+_MAX_INLINE_SAVE_CHARS = 2000
+_MAX_BASE64_SIZE_MB = 10  # 10MB limit for base64 decoded files
+_VALID_ENCODINGS = {"utf-8", "utf-8-sig", "latin-1", "ascii", "iso-8859-1"}
+
 _PATH_GUIDE = """
 ## File paths (scoped file tools)
 
@@ -27,9 +33,65 @@ Use `read_file`, `list_files`, `search_files`, and `save_file` with **scope** an
 | `projects` | projects/ | my-project/workfile.md | projects/ |
 | `output` | output/ | reports/foo.html | output/ |
 
-Tony: `save_file` only with scope `projects`. After creating a project, append its registry entry to `projects/index.md`.
+Tony: `save_file` only with scope `projects`. Keep `save_file` contents under 2000 characters.
+For larger bodies use `save_file_base64` or `append_file` (section by section).
+After creating a project, append its registry entry to `projects/index.md`.
 Jarvis: read-only — use `read_file` / `list_files` / `search_files` only (no `save_file`).
 """
+
+_MAX_INLINE_SAVE_CHARS = 2000
+
+
+def _validate_encoding(enc: str) -> str:
+    """Validate and return safe encoding, falling back to utf-8."""
+    if not enc:
+        return "utf-8"
+    enc_lower = enc.lower().replace("_", "-")
+    if enc_lower in _VALID_ENCODINGS:
+        return enc
+    try:
+        codecs.lookup(enc)
+        return enc
+    except LookupError:
+        return "utf-8"
+
+
+def _is_safe_path(base: Path, target: Path) -> bool:
+    """Check if target is within base, handling symlinks securely."""
+    try:
+        base_resolved = base.resolve()
+        target_resolved = target.resolve()
+        # Check for symlinks in the path chain that could escape scope
+        for part in target_resolved.parents:
+            if part.is_symlink():
+                return False
+        if target_resolved.is_symlink():
+            return False
+        target_resolved.relative_to(base_resolved)
+        return True
+    except (ValueError, RuntimeError, OSError):
+        return False
+
+
+def resolve_scoped_path(
+    scope: str, path: str
+) -> tuple[Optional[Path], Optional[str]]:
+    """Resolve scope + relative path to an absolute Path, or return an error string."""
+    key = (scope or "").strip().lower()
+    if key not in _SCOPES:
+        allowed = ", ".join(sorted(_SCOPES))
+        return None, f"error: invalid scope '{scope}'. Use one of: {allowed}"
+    base_dir, prefixes = _SCOPES[key]
+    rel = path
+    for prefix in prefixes:
+        rel = _strip_prefix(rel, prefix)
+    # Cache resolved base_dir to prevent double resolution
+    base_dir_resolved = base_dir.resolve()
+    resolved = (base_dir_resolved / rel).resolve()
+    # Use safe path check that handles symlinks
+    if not _is_safe_path(base_dir_resolved, resolved):
+        return None, f"error: path escapes scope root or contains symlinks: {path}"
+    return resolved, None
 
 
 def _strip_prefix(path: str, prefix: str) -> str:
@@ -78,7 +140,7 @@ class ScopedFileToolkit(Toolkit):
         }
         tools = [self.read_file, self.list_files, self.search_files]
         if allow_save:
-            tools.append(self.save_file)
+            tools.extend([self.save_file, self.save_file_base64, self.append_file])
         save_note = (
             "save_file only supports scope=projects. "
             if allow_save
@@ -87,10 +149,14 @@ class ScopedFileToolkit(Toolkit):
         super().__init__(
             name="scoped_files",
             tools=tools,
+            add_instructions=True,
             instructions=(
-                f"{agent_label} file tools: pass scope (knowledge | projects | output) and a relative path. "
+                f"{agent_label} file I/O: always pass scope AND path — never use file_name alone. "
                 f"{save_note}"
-                "Example: read_file(scope='knowledge', path='index.md')."
+                "Examples: read_file(scope='projects', path='index.md'); "
+                "save_file(scope='projects', path='my-project/workfile.md', contents='<short skeleton>'); "
+                "append_file(scope='projects', path='my-project/workfile.md', text='\\n## draft\\n...'); "
+                "save_file_base64(scope='projects', path='my-project/workfile.md', contents_base64='...')."
             ),
         )
 
@@ -116,9 +182,15 @@ class ScopedFileToolkit(Toolkit):
         overwrite: bool = True,
         encoding: str = "utf-8",
     ) -> str:
-        """Write a file (Tony only — scope must be projects)."""
+        """Write a file (Tony only — scope must be projects). Keep contents under 2000 chars."""
         if not self._allow_save:
             return "error: save_file is not available for this agent."
+        if len(contents) > _MAX_INLINE_SAVE_CHARS:
+            return (
+                f"error: contents too long ({len(contents)} chars). "
+                f"Use save_file_base64 for the full file, or append_file section-by-section "
+                f"(max {_MAX_INLINE_SAVE_CHARS} chars per save_file call)."
+            )
         if (scope or "").strip().lower() != "projects":
             return (
                 "error: save_file only supports scope='projects'. "
@@ -128,6 +200,61 @@ class ScopedFileToolkit(Toolkit):
         if err:
             return err
         return root.save(contents, path, overwrite=overwrite, encoding=encoding)
+
+    def save_file_base64(
+        self,
+        scope: FileScope,
+        path: str,
+        contents_base64: str,
+        overwrite: bool = True,
+        encoding: str = "utf-8",
+    ) -> str:
+        """Write a file from base64-encoded UTF-8 (Tony only — for large workfiles/reports)."""
+        if not self._allow_save:
+            return "error: save_file_base64 is not available for this agent."
+        if (scope or "").strip().lower() != "projects":
+            return "error: save_file_base64 only supports scope='projects'."
+        root, err = self._resolve(scope)
+        if err:
+            return err
+        try:
+            raw = base64.b64decode(contents_base64.strip(), validate=True)
+            # Enforce size limit on decoded content
+            if len(raw) > _MAX_BASE64_SIZE_MB * 1024 * 1024:
+                return f"error: decoded file too large (max {_MAX_BASE64_SIZE_MB}MB)"
+            text = raw.decode(encoding)
+        except Exception as e:
+            return f"error: invalid base64 or decoding failed: {e}"
+        # Validate encoding before saving
+        safe_encoding = _validate_encoding(encoding)
+        return root.save(text, path, overwrite=overwrite, encoding=safe_encoding)
+
+    def append_file(
+        self,
+        scope: FileScope,
+        path: str,
+        text: str,
+        encoding: str = "utf-8",
+    ) -> str:
+        """Append text to a projects file (Tony only). Use for workfile sections; keep text under 2000 chars."""
+        if not self._allow_save:
+            return "error: append_file is not available for this agent."
+        if len(text) > _MAX_INLINE_SAVE_CHARS:
+            return (
+                f"error: append text too long ({len(text)} chars). "
+                f"Split into smaller append_file calls (max {_MAX_INLINE_SAVE_CHARS} each)."
+            )
+        if (scope or "").strip().lower() != "projects":
+            return "error: append_file only supports scope='projects'."
+        resolved, err = resolve_scoped_path(scope, path)
+        if err:
+            return err
+        # Validate encoding
+        safe_encoding = _validate_encoding(encoding)
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        with open(resolved, "a", encoding=safe_encoding) as f:
+            f.write(text)
+        return str(resolved)
 
     def list_files(self, scope: FileScope, directory: str = ".") -> str:
         """List files under a directory within scope."""

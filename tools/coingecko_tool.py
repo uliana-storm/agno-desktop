@@ -16,10 +16,26 @@ from agno.tools import Toolkit
 
 BASE_URL = "https://pro-api.coingecko.com/api/v3"
 DEFAULT_TIMEOUT = 30
+_MAX_JSON_CHARS = 12_000  # ~3k tokens — keeps tool results inside 32k context window
 
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _cap_payload(result: dict) -> dict:
+    """Truncate oversized API payloads before they enter agent context."""
+    text = json.dumps(result, default=str)
+    if len(text) <= _MAX_JSON_CHARS:
+        return result
+    return {
+        "status": result.get("status", "ok"),
+        "fetched_at": result.get("fetched_at"),
+        "path": result.get("path"),
+        "truncated": True,
+        "original_chars": len(text),
+        "preview": text[:_MAX_JSON_CHARS] + "\n...(truncated for context limits)",
+    }
 
 
 class CoinGeckoToolkit(Toolkit):
@@ -81,12 +97,14 @@ class CoinGeckoToolkit(Toolkit):
             )
             response.raise_for_status()
             data = response.json()
-            return {
-                "status": "ok",
-                "fetched_at": _utc_now(),
-                "path": path,
-                "data": data,
-            }
+            return _cap_payload(
+                {
+                    "status": "ok",
+                    "fetched_at": _utc_now(),
+                    "path": path,
+                    "data": data,
+                }
+            )
         except requests.exceptions.HTTPError as e:
             body = ""
             if e.response is not None:
@@ -150,10 +168,11 @@ class CoinGeckoToolkit(Toolkit):
 
         Args:
             vs_currency: Quote currency (e.g. "usd", "aud").
-            per_page: Number of results (max 250).
+            per_page: Number of results (max 50 — larger responses are truncated).
             page: Page number for pagination.
             order: Sort order (default market_cap_desc).
         """
+        per_page = min(max(int(per_page), 1), 50)
         return self._request(
             "/coins/markets",
             {
@@ -223,7 +242,7 @@ class CoinGeckoToolkit(Toolkit):
         self,
         vs_currency: str = "usd",
         duration: str = "24h",
-        top_coins: str = "1000",
+        top_coins: str = "100",
     ) -> dict:
         """
         Top gainers and losers over a time window (Pro endpoint).
@@ -231,7 +250,7 @@ class CoinGeckoToolkit(Toolkit):
         Args:
             vs_currency: Quote currency (e.g. "usd", "aud").
             duration: Window such as "1h", "24h", "7d", "30d".
-            top_coins: Universe size — "300", "500", or "1000".
+            top_coins: Universe size — prefer "100"; max "300" (larger responses are truncated).
         """
         return self._request(
             "/coins/top_gainers_losers",

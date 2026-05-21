@@ -10,6 +10,7 @@ Jarvis is the first point of contact. It:
 
 import os
 import sys
+from pathlib import Path
 from typing import Optional
 
 # Add parent directory to path so tools can be imported
@@ -41,8 +42,13 @@ from tools.slack_tools_config import jarvis_slack_tools
 def load_prompt() -> str:
     """Load system prompt from adjacent prompts.md."""
     prompt_path = os.path.join(os.path.dirname(__file__), "prompts.md")
-    with open(prompt_path) as f:
-        return f.read()
+    try:
+        with open(prompt_path, encoding="utf-8") as f:
+            return f.read()
+    except FileNotFoundError:
+        return "You are Jarvis, an intake coordinator at Stormrake. Route requests, handle scheduling, and escalate complex research to Tony."
+    except Exception as e:
+        return f"You are Jarvis, an intake coordinator at Stormrake. [Prompt load error: {e}]"
 
 
 def create_jarvis_agent(

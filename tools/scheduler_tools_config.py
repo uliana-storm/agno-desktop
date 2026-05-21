@@ -19,6 +19,13 @@ _CREATE_BLOCKED_MSG = json.dumps(
 class BlockedCreateSchedulerTools(SchedulerTools):
     """SchedulerTools without LLM-driven create_schedule."""
 
+    def __init__(self, **kwargs: Any) -> None:
+        # SchedulerTools passes its own instructions= then **kwargs; pop ours first.
+        override_instructions = kwargs.pop("instructions", None)
+        super().__init__(**kwargs)
+        if override_instructions is not None:
+            self.instructions = override_instructions
+
     def create_schedule(self, *args: Any, **kwargs: Any) -> str:
         return _CREATE_BLOCKED_MSG
 
@@ -42,13 +49,14 @@ class TonySchedulerTools(BlockedCreateSchedulerTools):
     """Tony scheduler toolkit — create via create_project_schedule only."""
 
     def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self.instructions = (
+        kwargs.setdefault(
+            "instructions",
             "Manage existing schedules with list_schedules, get_schedule, enable_schedule, "
             "disable_schedule, delete_schedule, and get_schedule_runs. "
             "To CREATE or UPDATE a recurring project schedule, call create_project_schedule — "
-            "not create_schedule."
+            "not create_schedule.",
         )
+        super().__init__(**kwargs)
 
 
 def tony_scheduler_tools() -> TonySchedulerTools:

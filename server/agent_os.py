@@ -1,9 +1,18 @@
-# Patch httpx before any imports to log all outbound HTTP requests
+# Conditional httpx logging patch - only applied if AGENT_DEBUG is enabled
+import os
 import httpx
 import json
 from datetime import datetime
 
+# Track if we've already patched to avoid double-patching
+_already_patched = False
+
 def _log_request(url, kwargs):
+    """Log outgoing HTTP requests with token estimates."""
+    # Skip logging for non-LLM requests (health checks, telemetry, etc.)
+    if "/v1" not in str(url) and "localhost" not in str(url):
+        return
+    
     body = kwargs.get("json") or {}
     messages = body.get("messages", [])
     # rough token estimate: chars / 4
@@ -49,19 +58,29 @@ def _log_request(url, kwargs):
                 preview = content[:200].replace("\n", " ")
                 print(f"    [{i}] {role}: {preview}... ({len(content)} chars)", flush=True)
 
-# Sync
-_orig_sync = httpx.Client.post
-def _patched_sync(self, url, *args, **kwargs):
-    _log_request(url, kwargs)
-    return _orig_sync(self, url, *args, **kwargs)
-httpx.Client.post = _patched_sync
+def _patch_httpx_logging():
+    """Apply httpx logging patch if not already applied."""
+    global _already_patched
+    if _already_patched:
+        return
+    
+    _orig_sync = httpx.Client.post
+    def _patched_sync(self, url, *args, **kwargs):
+        _log_request(url, kwargs)
+        return _orig_sync(self, url, *args, **kwargs)
+    httpx.Client.post = _patched_sync
 
-# Async
-_orig_async = httpx.AsyncClient.post
-async def _patched_async(self, url, *args, **kwargs):
-    _log_request(url, kwargs)
-    return await _orig_async(self, url, *args, **kwargs)
-httpx.AsyncClient.post = _patched_async
+    _orig_async = httpx.AsyncClient.post
+    async def _patched_async(self, url, *args, **kwargs):
+        _log_request(url, kwargs)
+        return await _orig_async(self, url, *args, **kwargs)
+    httpx.AsyncClient.post = _patched_async
+    
+    _already_patched = True
+
+# Apply patch only if AGENT_DEBUG is enabled
+if os.environ.get("AGENT_DEBUG", "").lower() in ("1", "true", "yes"):
+    _patch_httpx_logging()
 
 """
 AgentOS server for Jarvis and Tony with native scheduler support.

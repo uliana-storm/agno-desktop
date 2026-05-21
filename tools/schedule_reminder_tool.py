@@ -16,7 +16,9 @@ DEFAULT_TIMEZONE = "Australia/Melbourne"
 
 def _cron_for_datetime(dt: datetime) -> str:
     """Build a 5-field cron for a single fire at dt (minute hour dom month dow)."""
-    return f"{dt.minute} {dt.hour} {dt.day} {dt.month} *"
+    # Use ? for day-of-week to disable it when day-of-month is specified
+    # This ensures the schedule only fires on the specific date, not any day of that week
+    return f"{dt.minute} {dt.hour} {dt.day} {dt.month} ?"
 
 
 def _normalize_name(name: str) -> str:

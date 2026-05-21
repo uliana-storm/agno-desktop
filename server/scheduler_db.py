@@ -4,7 +4,9 @@ from functools import lru_cache
 
 from agno.db.sqlite import SqliteDb
 
-SCHEDULER_DB_FILE = "agno.db"
+from server.paths import MEMORY_DIR
+
+SCHEDULER_DB_FILE = str(MEMORY_DIR / "agno.db")
 
 
 @lru_cache(maxsize=1)

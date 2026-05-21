@@ -10,6 +10,7 @@ Handles:
 No model inference here — pure string matching and state lookup.
 """
 
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -22,23 +23,47 @@ from server.paths import ACTIVE_THREADS_PATH
 THREAD_STATE_PATH = ACTIVE_THREADS_PATH
 
 
+# In-memory store with refresh tracking
+_active_threads_cache: dict = {}
+_last_load_time: float = 0
+
+
 def _load_thread_state() -> dict:
     """Load active thread-to-project mappings from file."""
+    global _last_load_time
     if THREAD_STATE_PATH.exists():
         with open(THREAD_STATE_PATH) as f:
+            _last_load_time = os.path.getmtime(THREAD_STATE_PATH)
             return json.load(f)
     return {}
 
 
+def _get_active_threads() -> dict:
+    """Get thread state, refreshing from disk if file has changed."""
+    global _active_threads_cache
+    if THREAD_STATE_PATH.exists():
+        mtime = os.path.getmtime(THREAD_STATE_PATH)
+        if mtime > _last_load_time:
+            _active_threads_cache = _load_thread_state()
+    return _active_threads_cache
+
+
 def _save_thread_state(state: dict):
-    """Save active thread-to-project mappings to file."""
+    """Save active thread-to-project mappings to file with locking."""
     THREAD_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(THREAD_STATE_PATH, "w") as f:
-        json.dump(state, f, indent=2)
+        # Acquire exclusive lock for atomic write
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        try:
+            json.dump(state, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 
-# In-memory store backed by file
-active_threads = _load_thread_state()
+# Initialize cache at import time
+_active_threads_cache = _load_thread_state()
 
 
 def keyword_match(message_text: str, index_path: str = "projects/index.md") -> list[dict]:
@@ -92,7 +117,7 @@ def get_active_project(thread_ts: str) -> dict | None:
     Returns project metadata if thread_ts is registered as an active
     Tony project. None otherwise.
     """
-    project_name = active_threads.get(thread_ts)
+    project_name = _get_active_threads().get(thread_ts)
     if not project_name:
         return None
 
@@ -113,9 +138,9 @@ def register_thread(thread_ts: str, project_name: str):
     Called by slack_bot.py after a successful handoff to Tony.
     Persists the thread → project mapping.
     """
-    global active_threads
-    active_threads[thread_ts] = project_name
-    _save_thread_state(active_threads)
+    global _active_threads_cache
+    _active_threads_cache[thread_ts] = project_name
+    _save_thread_state(_active_threads_cache)
 
 
 def route(message_text: str, thread_ts: str) -> dict:

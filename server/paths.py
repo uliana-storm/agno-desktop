@@ -2,10 +2,13 @@
 
 from pathlib import Path
 
-MEMORY_DIR = Path("memory")
-OUTPUT_DIR = Path("output")
-PROJECTS_DIR = Path("projects")
-KNOWLEDGE_DIR = Path("knowledge")
+# Get project root (directory containing this file's parent)
+_PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+
+MEMORY_DIR = _PROJECT_ROOT / "memory"
+OUTPUT_DIR = _PROJECT_ROOT / "output"
+PROJECTS_DIR = _PROJECT_ROOT / "projects"
+KNOWLEDGE_DIR = _PROJECT_ROOT / "knowledge"
 
 REPORTS_DIR = OUTPUT_DIR / "reports"
 PROJECT_SERVER_DIR = OUTPUT_DIR / "project_server"

@@ -96,7 +96,7 @@ def tony_slack_instructions() -> str:
         "Your reply streams to ## Slack location automatically.\n"
         "- Do NOT call `post_to_slack` or `send_message_thread` with the same summary — one stream only.\n"
         "- After setup or a task: one short confirmation in the stream (under 80 words).\n"
-        "- Use `upload_file` only when attaching deliverable files.\n"
+        "- Use `upload_deliverable` (path on disk) only when attaching deliverable files.\n"
     )
 
 

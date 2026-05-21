@@ -8,6 +8,27 @@ from typing import Any
 from agno.scheduler.manager import ScheduleManager
 from server.scheduler_db import get_scheduler_db
 
+# Regex for validating 5-field cron expressions
+_CRON_PATTERN = re.compile(
+    r"^\s*(\*|\d+|\d+-\d+|\*/\d+|\d+,\d+)\s+"  # minute
+    r"(\*|\d+|\d+-\d+|\*/\d+|\d+,\d+)\s+"      # hour
+    r"(\*|\d+|\d+-\d+|\*/\d+|\?|L|\d+,\d+)\s+" # day of month
+    r"(\*|\d+|\d+-\d+|\*/\d+|\d+,\d+)\s+"      # month
+    r"(\*|\d+|\d+-\d+|\?|L|#|\d+,\d+)\s*$"      # day of week
+)
+
+
+def _validate_cron(cron: str) -> tuple[bool, str]:
+    """Validate 5-field cron expression."""
+    if not cron:
+        return False, "cron is empty"
+    parts = cron.strip().split()
+    if len(parts) != 5:
+        return False, f"cron must have 5 fields, got {len(parts)}"
+    if not _CRON_PATTERN.match(cron):
+        return False, "cron contains invalid characters or format"
+    return True, ""
+
 DEFAULT_ENDPOINT = "/agents/tony/runs"
 DEFAULT_TIMEZONE = "Australia/Melbourne"
 
@@ -121,8 +142,9 @@ def create_project_schedule(
         return json.dumps({"error": "name is required"})
 
     cron = (cron or "").strip()
-    if not cron:
-        return json.dumps({"error": "cron is required"})
+    is_valid, error_msg = _validate_cron(cron)
+    if not is_valid:
+        return json.dumps({"error": f"invalid cron: {error_msg}"})
 
     if not (message or "").strip():
         return json.dumps({"error": "message is required"})

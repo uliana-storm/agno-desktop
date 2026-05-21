@@ -1,7 +1,6 @@
 """Shared agent run executor with Slack streaming support."""
 
 import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from pathlib import Path
 
 from agno.agent import RunEvent
@@ -15,29 +14,12 @@ def _debug(msg: str) -> None:
     if agent_debug_enabled():
         print(msg, flush=True)
 
-AGENT_RUN_TIMEOUT = 600  # 10 minutes
-
-
 def format_handoff_slack_message(project_name: str) -> str:
     """User-visible handoff confirmation (Slack mrkdwn, not Markdown)."""
     return (
         f"Handed off to Tony for project *{project_name}*. "
         "He'll read up and get back to you shortly."
     )
-
-
-class AgentRunTimeout(Exception):
-    """Raised when an agent run exceeds AGENT_RUN_TIMEOUT seconds."""
-
-
-def run_with_timeout(fn, timeout: int = AGENT_RUN_TIMEOUT):
-    """Run fn in a worker thread; raise AgentRunTimeout if it exceeds timeout."""
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(fn)
-        try:
-            return future.result(timeout=timeout)
-        except FuturesTimeout:
-            raise AgentRunTimeout(f"Agent run exceeded {timeout}s") from None
 
 
 def _stream_agent_run(
@@ -51,9 +33,7 @@ def _stream_agent_run(
     t0: float = 0,
     stream_to_slack: bool = True,
 ) -> tuple[str, list[Path], str]:
-    """Execute a streaming agent run (must run inside the timeout worker thread).
-    Returns: (response_text, new_files, handoff_project_name)
-    """
+    """Execute a streaming agent run. Returns: (response_text, new_files, handoff_project_name)."""
     full_response = ""
     first_token = True
     t_last = None
@@ -145,13 +125,14 @@ def _stream_agent_run(
                     _debug(f"[HANDOFF DEBUG] detected handoff project: {handoff_project}")
                 except IndexError:
                     pass
-            debug_text = format_tool_completion_message(tool_name, str(tool_result))
-            if debug_text:
-                client.chat_postMessage(
-                    channel=channel,
-                    thread_ts=thread_ts,
-                    text=debug_text,
-                )
+            # Tool debug posting disabled - kept for reference
+            # debug_text = format_tool_completion_message(tool_name, str(tool_result))
+            # if debug_text:
+            #     client.chat_postMessage(
+            #         channel=channel,
+            #         thread_ts=thread_ts,
+            #         text=debug_text,
+            #     )
 
         elif event == RunEvent.run_error:
             error = getattr(chunk, "content", None) or "unknown error"
@@ -210,23 +191,11 @@ def run_agent(
     t0: float = 0,
     stream_to_slack: bool = True,
 ) -> tuple[str, list[Path], str]:
-    """Run an agent with timeout and optional Slack streaming."""
+    """Run an agent with optional Slack streaming (no wall-clock limit)."""
     before = snapshot_deliverable_files()
-
-    try:
-        return run_with_timeout(
-            lambda: _stream_agent_run(
-                agent, prompt, client, channel, thread_ts, session_id, before, t0, stream_to_slack
-            ),
-        )
-    except AgentRunTimeout:
-        print(f"[timeout] Agent run exceeded {AGENT_RUN_TIMEOUT}s for session {session_id}")
-        client.chat_postMessage(
-            channel=channel,
-            thread_ts=thread_ts,
-            text="⏱️ This query took too long (over 10 minutes). Please try a simpler or more specific query.",
-        )
-        return "_(timed out after 10 minutes)_", [], ""
+    return _stream_agent_run(
+        agent, prompt, client, channel, thread_ts, session_id, before, t0, stream_to_slack
+    )
 
 
 def upload_files(client, channel: str, thread_ts: str | None, files: list[Path]) -> None:

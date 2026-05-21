@@ -41,7 +41,7 @@ def tony_slack_tools() -> SlackTools:
         enable_list_users=True,
         enable_get_user_info=True,
         enable_get_channel_info=True,
-        enable_upload_file=True,
+        enable_upload_file=False,
         enable_download_file=False,
         enable_search_messages=False,
         enable_search_workspace=False,

@@ -3,7 +3,9 @@
 import builtins as _builtins
 import io
 import runpy
+import signal
 from contextlib import redirect_stderr, redirect_stdout
+from functools import wraps
 from pathlib import Path
 from typing import Any, Optional
 
@@ -76,7 +78,21 @@ _ALLOWED_BUILTINS = (
     "ZeroDivisionError",
 )
 
-_BLOCKED_IMPORTS = frozenset({"subprocess", "shutil"})
+_BLOCKED_IMPORTS = frozenset({
+    "subprocess",
+    "shutil",
+    "os",
+    "socket",
+    "urllib",
+    "http",
+    "ftplib",
+    "telnetlib",
+    "ssl",
+    "ctypes",
+    "mmap",
+    "resource",
+    "gc",
+})
 
 
 def _safe_import(name, globals=None, locals=None, fromlist=(), level=0):
@@ -118,11 +134,35 @@ def build_safe_globals(base_dir: Path) -> dict[str, Any]:
     return {"__builtins__": builtins_dict}
 
 
+class _TimeoutError(Exception):
+    pass
+
+
+def _timeout(seconds=30):
+    """Decorator to add timeout to function execution using SIGALRM."""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            def handler(signum, frame):
+                raise _TimeoutError(f"Code execution exceeded {seconds} seconds")
+            old_handler = signal.signal(signal.SIGALRM, handler)
+            signal.alarm(seconds)
+            try:
+                return func(*args, **kwargs)
+            finally:
+                signal.alarm(0)
+                signal.signal(signal.SIGALRM, old_handler)
+        return wrapper
+    return decorator
+
+
 def _truncate(text: str, limit: int = _MAX_OUTPUT_CHARS) -> str:
     text = text.strip()
     if len(text) <= limit:
         return text
-    return text[:limit] + "\n...(truncated)"
+    # Account for truncation suffix length to stay under limit
+    suffix = "\n...(truncated)"
+    return text[:limit - len(suffix)] + suffix
 
 
 def _format_run_result(
@@ -160,10 +200,21 @@ class SandboxPythonTools(PythonTools):
             safe_globals=build_safe_globals(resolved),
             safe_locals={},
             restrict_to_base_dir=True,
-            exclude_tools=["pip_install_package", "uv_pip_install_package"],
+            add_instructions=True,
+            instructions=(
+                "Python sandbox cwd is output/ only. Do not read or write projects/ or knowledge/ "
+                "paths here — use scoped read_file / save_file / append_file instead."
+            ),
+            exclude_tools=[
+                "pip_install_package",
+                "uv_pip_install_package",
+                "read_file",
+                "list_files",
+            ],
             **kwargs,
         )
 
+    @_timeout(30)
     def run_python_code(self, code: str, variable_to_return: Optional[str] = None) -> str:
         try:
             warn()
@@ -178,6 +229,8 @@ class SandboxPythonTools(PythonTools):
                 variable_to_return,
                 self.safe_locals,
             )
+        except _TimeoutError as e:
+            return f"Error: Code execution timeout - {e}"
         except Exception as e:
             logger.exception("Error running python code")
             return f"Error running python code: {e}"

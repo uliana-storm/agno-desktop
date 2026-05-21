@@ -10,7 +10,7 @@ A two-agent research system built on the Agno framework, featuring:
 - **AgentOS** (port 7777): API server with native cron scheduler — executes scheduled agent runs
 - **Slack bot** (Socket Mode): Live conversation dispatch to Jarvis or Tony
 - Shared knowledge base with project memory
-- Persistent per-agent SQLite memory + shared scheduler database (`agno.db`)
+- Persistent per-agent SQLite memory + shared scheduler database (`memory/agno.db`)
 
 ---
 
@@ -19,7 +19,7 @@ A two-agent research system built on the Agno framework, featuring:
 | File | Purpose |
 |------|---------|
 | `.env` | Environment variables (Slack tokens, API keys) |
-| `agno.db` | Shared SQLite DB for AgentOS scheduler and `SchedulerTools` (schedules, run history) |
+| `memory/agno.db` | Shared SQLite DB for AgentOS scheduler and `SchedulerTools` (schedules, run history) |
 
 **Python extras:** `pip install reportlab` for Tony PDF generation via `FileGenerationTools`.
 
@@ -31,7 +31,7 @@ A two-agent research system built on the Agno framework, featuring:
 |------|---------|
 | `agent_os.py` | AgentOS instance with `scheduler=True`. Registers Jarvis and Tony via `AgentFactory`, serves on port **7777**. |
 | `paths.py` | Canonical directory constants (`memory/`, `output/`, `projects/`) and legacy migration helpers |
-| `scheduler_db.py` | `get_scheduler_db()` — shared `SqliteDb` pointing at root `agno.db` |
+| `scheduler_db.py` | `get_scheduler_db()` — shared `SqliteDb` pointing at `memory/agno.db` |
 | `agent_payload.py` | Merge `factory_input` into scheduler run payloads |
 | `slack_schedule_executor.py` | In-process Slack streaming for scheduled agent runs |
 | `scheduler_lifespan.py` | Patched AgentOS scheduler lifespan using `SlackStreamingScheduleExecutor` |
@@ -105,7 +105,7 @@ Active project tracking and workfiles.
 | File | Purpose |
 |------|---------|
 | `agent.py` | Tony agent factory. Model: port 8081 (Qwopus 35B). Memory: `memory/tony_memory.db`. Session: `tony-{user_id}-{thread_ts}`. |
-| `prompts.md` | Tony system prompt (execution, workfile, scheduling) |
+| `prompts.md` | Tony system prompt (execution checklist, checkpointing rules, and tool calling discipline) |
 
 **Tony tools:**
 - `BraveSearchToolkit`, `NewsFeedToolkit`, `CoinGeckoToolkit`
@@ -145,11 +145,23 @@ Active project tracking and workfiles.
 | `slack_blocks_tool.py` | `post_eod_report` — Block Kit EOD digest posting |
 | `slack_report_blocks.py` | Block Kit builder for EOD reports |
 | `slack_read_tool.py` | `get_messages_since_today`, `search_slack_messages` (complements Agno SlackTools) |
+| `html_generator.py` | `generate_html_report()`, `generate_html_from_markdown()` — HTML report generation with professional styling, saves to `output/reports/` |
 | `workfile_config.py` | EOD project workfile config JSON read/write + channel auto-enroll |
 | `tony_file_toolkits.py` | Scoped `read_file` / `save_file` / `list_files` / `search_files` with `scope` arg |
 | `create_project_schedule_tool.py` | Deterministic recurring cron + payload for Tony |
 | `scheduler_tools_config.py` | `BlockedCreateSchedulerTools` — `create_schedule` disabled on both agents |
 | `schedule_reminder_tool.py` | One-shot Jarvis reminders (`schedule_reminder_in_minutes`) |
+
+### Path Resolution
+
+| Tool Type | Scope/Directory | Path Format | Example |
+|-----------|----------------|-------------|---------|
+| Scoped File Tools | `projects/` | Relative to `projects/` | `save_file(scope="projects", path="my-project/workfile.md")` |
+| Scoped File Tools | `knowledge/` | Relative to `knowledge/` | `read_file(scope="knowledge", path="core/voice.md")` |
+| FileGenerationTools | `output/reports/` | Filename only | `generate_pdf(file_name="report.pdf")` |
+| HTML Generator | `output/reports/` | Filename with extension | `generate_html_report(file_name="analysis.html")` |
+| SandboxPythonTools | `output/` | Relative to `output/` | `open('reports/data.txt', 'w')` |
+| Upload Deliverable | Any scope | Full relative path | `upload_deliverable(scope="output", path="reports/file.html")` |
 
 ---
 
@@ -232,7 +244,7 @@ Separate Next.js project (`package.json`, `tsconfig.json`, `components.json`, `.
 | **Tony project server** | 8090 | Serves deployed project apps |
 | **Local LLMs** | 8081, 8082 | Model endpoints for Tony and Jarvis |
 
-Live Slack traffic uses `agent.run()` directly in the bot. Scheduled runs are persisted to `agno.db` and executed by AgentOS calling `/agents/{jarvis|tony}/runs`.
+Live Slack traffic uses `agent.run()` directly in the bot. Scheduled runs are persisted to `memory/agno.db` and executed by AgentOS calling `/agents/{jarvis|tony}/runs`.
 
 ### Scheduler (Agno Native)
 
@@ -268,15 +280,26 @@ Live Slack traffic uses `agent.run()` directly in the bot. Scheduled runs are pe
 
 | Name | Port | Model ID | Agent |
 |------|------|----------|-------|
-| **qwopus** | 8081 | Qwopus3.6-35B-A3B-v1-Q4_K_M.gguf | Tony |
-| **qwopus-glm** | 8082 | Qwopus-GLM-18B-Healed-Q5_K_M.gguf | Jarvis |
-| **gemma** | 8083 | gemma-4-26B-A4B-it-UD-Q5_K_XL.gguf | — (compare script) |
-| **qwen** | 8084 | Qwen3.5-27B-UD-Q4_K_XL.gguf | Jarvis (alt) |
+| **qwopus** | 8081 | Qwopus3.6-35B-A3B-v1-Q4_K_M.gguf | Tony (default) |
+| **gemma** | 8082 | gemma-4-26B-A4B-it-UD-Q5_K_XL.gguf | Jarvis |
+| **Mistral Medium** | 8083 | Mistral-Medium-3.5-128B | Tony (testing) |
 
 ### Output Format
 
 - **Slack**: Plain text, `*bold*`, `•` bullets — no markdown headers
 - **Reports**: HTML with inline CSS in `output/reports/`
+
+---
+
+## Security Features
+
+| Feature | Implementation | File |
+|---------|---------------|------|
+| Sandbox module blocking | `os`, `socket`, `urllib`, `http`, `ftplib`, etc. blocked | `tools/python_sandbox.py` |
+| Execution timeout | 30-second limit via `signal.alarm` | `tools/python_sandbox.py` |
+| Path traversal protection | Symlink detection + scope validation | `tools/tony_file_toolkits.py` |
+| File size limits | 10MB cap on base64 file operations | `tools/tony_file_toolkits.py` |
+| Thread state file locking | `fcntl.flock` for atomic writes | `bot/router.py` |
 
 ---
 
@@ -302,7 +325,7 @@ AGENT_OS_PORT=7777                # AgentOS port (default 7777)
 AGENT_DEBUG=1                     # Verbose stream/tool debug logs in slack_bot
 ```
 
-**Projects:** `projects/index.md` is a registry template only until Tony creates projects (Tony appends `## project-name` after each new workfile). Schedules persist in local `agno.db` (not in git).
+**Projects:** `projects/index.md` is a registry template only until Tony creates projects (Tony appends `## project-name` after each new workfile). Schedules persist in local `memory/agno.db` (not in git). All databases (scheduler + agent memories) live in `memory/` directory.
 
 ---
 
@@ -351,6 +374,6 @@ uvicorn output.project_server.app:app --host 0.0.0.0 --port 8090
 | Scripts | 5 | compare_models, weekly_report, verify_agent_os, start/stop_live_test |
 | Tests | 2 | run_agent, test_coingecko_tool |
 | Config | 1 | `.env` |
-| Databases | 3 | `agno.db`, jarvis_memory.db, tony_memory.db |
+| Databases | 3 | `memory/agno.db`, `memory/jarvis_memory.db`, `memory/tony_memory.db` |
 | Servers | 2 | AgentOS :7777, project server :8090 |
 | Generated | N | `output/reports/*.html`, dynamic `output/project_server/projects/` |
