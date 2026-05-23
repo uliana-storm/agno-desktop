@@ -2,102 +2,121 @@
 feed_fetch_tool.py
 
 Fetches and parses RSS feeds from approved sources.
-Includes full article text extraction via newspaper3k.
+Three-stage design:
+  1. list_sources()             → model picks relevant sources
+  2. fetch_feed_by_source()     → model picks relevant articles
+  3. fetch_and_extract()        → full text fetched + compressed via Negentropy 4B
+                                  only the extract enters the main model context
+
+Full article text never reaches Tony directly.
 """
 
 import feedparser
 import httpx
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 from agno.tools import Toolkit
 
+from tools.extractor_client import extract_relevant
 
-# --- Source registry ---
 
-APPROVED_FEEDS: dict[str, str] = {
-    "fintech_news_au":       "https://fintechnews.au/feed/",
-    "coindesk":              "https://www.coindesk.com/arc/outboundfeeds/rss/?outputType=xml",
-    "the_block":             "https://www.theblock.co/rss.xml",
-    "cointelegraph_reg":     "https://cointelegraph.com/rss/tag/regulation",
-    "fintech_news_ch":       "https://fintechnews.ch/feed/",
-    "decrypt":               "https://decrypt.co/feed",
-    "reuters_crypto":        "https://news.google.com/rss/search?q=site:reuters.com+cryptocurrency",
+# ---------------------------------------------------------------------------
+# Source registry
+# Each entry: url + description so the model can select sources intelligently.
+# ---------------------------------------------------------------------------
+
+APPROVED_FEEDS: dict[str, dict] = {
+    "fintech_news_au": {
+        "url": "https://fintechnews.au/feed/",
+        "description": (
+            "Australian fintech industry news — startups, payments, lending, "
+            "open banking, local regulatory developments."
+        ),
+    },
+    "coindesk": {
+        "url": "https://www.coindesk.com/arc/outboundfeeds/rss/?outputType=xml",
+        "description": (
+            "Breaking crypto and digital asset news — market moves, institutional "
+            "activity, DeFi, NFTs, Bitcoin, Ethereum."
+        ),
+    },
+    "the_block": {
+        "url": "https://www.theblock.co/rss.xml",
+        "description": (
+            "In-depth crypto research and news — on-chain data, funding rounds, "
+            "protocol analysis, exchange activity."
+        ),
+    },
+    "cointelegraph_reg": {
+        "url": "https://cointelegraph.com/rss/tag/regulation",
+        "description": (
+            "Crypto regulation only — government policy, SEC/CFTC/ASIC actions, "
+            "legislation, enforcement, compliance."
+        ),
+    },
+    "fintech_news_ch": {
+        "url": "https://fintechnews.ch/feed/",
+        "description": (
+            "Swiss and European fintech — banking innovation, WealthTech, "
+            "RegTech, crypto regulation in Europe."
+        ),
+    },
+    "decrypt": {
+        "url": "https://decrypt.co/feed",
+        "description": (
+            "Consumer-focused crypto and Web3 news — NFTs, gaming, AI x crypto, "
+            "accessible market explainers."
+        ),
+    },
+    "reuters_crypto": {
+        "url": "https://news.google.com/rss/search?q=site:reuters.com+cryptocurrency",
+        "description": (
+            "Reuters cryptocurrency coverage — institutional, macroeconomic angle, "
+            "high credibility, lower volume."
+        ),
+    },
 }
 
 
-# --- HTTP Client with proper headers ---
+# ---------------------------------------------------------------------------
+# HTTP client
+# ---------------------------------------------------------------------------
 
 DEFAULT_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    ),
     "Accept": "application/rss+xml,application/xml,application/xhtml+xml,text/html;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.5",
 }
 
 
 def _get_http_client() -> httpx.Client:
-    """Return configured HTTP client with headers to avoid 403 errors."""
-    return httpx.Client(
-        headers=DEFAULT_HEADERS,
-        timeout=15,
-        follow_redirects=True,
-    )
+    return httpx.Client(headers=DEFAULT_HEADERS, timeout=15, follow_redirects=True)
 
 
-# --- Data shape ---
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
 
-class FeedItem:
-    """Normalised representation of a single feed entry."""
-
-    def __init__(
-        self,
-        source: str,
-        title: str,
-        url: str,
-        published: Optional[str],
-        summary: Optional[str],
-        full_text: Optional[str] = None,
-    ):
-        self.source = source
-        self.title = title
-        self.url = url
-        self.published = published
-        self.summary = summary
-        self.full_text = full_text
-
-    def to_dict(self) -> dict:
-        return {
-            "source":    self.source,
-            "title":     self.title,
-            "url":       self.url,
-            "published": self.published,
-            "summary":   self.summary,
-            "full_text": self.full_text,
-        }
-
-
-# --- Parser ---
-
-def _parse_published(entry: feedparser.FeedParserDict) -> Optional[str]:
-    """Return ISO 8601 string from whichever date field is present."""
-    if hasattr(entry, "published_parsed") and entry.published_parsed:
-        try:
-            dt = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
-            return dt.isoformat()
-        except Exception:
-            pass
-    if hasattr(entry, "updated_parsed") and entry.updated_parsed:
-        try:
-            dt = datetime(*entry.updated_parsed[:6], tzinfo=timezone.utc)
-            return dt.isoformat()
-        except Exception:
-            pass
+def _parse_published(entry: feedparser.FeedParserDict) -> Optional[datetime]:
+    """Return timezone-aware datetime from whichever date field is present."""
+    for attr in ("published_parsed", "updated_parsed"):
+        val = getattr(entry, attr, None)
+        if val:
+            try:
+                return datetime(*val[:6], tzinfo=timezone.utc)
+            except Exception:
+                pass
     return None
 
 
-def _parse_feed(source_key: str, url: str, max_items: int) -> list[dict]:
+def _parse_feed(source_key: str, url: str, max_items: int, cutoff: Optional[datetime] = None) -> list[dict]:
     """
     Fetch and parse a single RSS feed.
-    Returns a list of normalised item dicts, or an error dict on failure.
+    Filters by cutoff datetime if provided.
+    Returns minimal item dicts: source, title, url, published.
     """
     try:
         with _get_http_client() as client:
@@ -105,209 +124,206 @@ def _parse_feed(source_key: str, url: str, max_items: int) -> list[dict]:
             response.raise_for_status()
             feed = feedparser.parse(response.text)
     except httpx.HTTPStatusError as e:
-        return [{"error": f"{source_key}: HTTP {e.response.status_code}", "url": url}]
+        return [{"error": f"{source_key}: HTTP {e.response.status_code}"}]
     except httpx.RequestError as e:
-        return [{"error": f"{source_key}: Request failed — {str(e)}", "url": url}]
+        return [{"error": f"{source_key}: request failed — {e}"}]
     except Exception as e:
-        return [{"error": f"{source_key}: Parse failed — {str(e)}", "url": url}]
+        return [{"error": f"{source_key}: parse failed — {e}"}]
 
     items = []
-    for entry in feed.entries[:max_items]:
-        # RSS feeds can use 'summary' or 'description' for the excerpt
-        excerpt = getattr(entry, "summary", None) or getattr(entry, "description", None) or ""
-        item = FeedItem(
-            source=source_key,
-            title=getattr(entry, "title", "").strip(),
-            url=getattr(entry, "link", ""),
-            published=_parse_published(entry),
-            summary=excerpt.strip() or None,
-        )
-        items.append(item.to_dict())
+    for entry in feed.entries:
+        if len(items) >= max_items:
+            break
+
+        published_dt = _parse_published(entry)
+
+        # Apply time filter if requested
+        if cutoff and published_dt and published_dt < cutoff:
+            continue
+
+        items.append({
+            "source":    source_key,
+            "title":     getattr(entry, "title", "").strip(),
+            "url":       getattr(entry, "link", ""),
+            "published": published_dt.isoformat() if published_dt else None,
+        })
 
     return items
 
 
-def _extract_full_text(url: str) -> dict:
+def _fetch_article_text(url: str) -> Optional[str]:
     """
-    Fetch and extract full article text from a URL.
-    Uses multiple fallback methods: newspaper3k, trafilatura, or raw HTML.
+    Fetch full article text. Tries newspaper3k → trafilatura → BeautifulSoup.
+    Returns raw text or None on complete failure.
+    Internal only — never returned to agent directly.
     """
-    result = {
-        "url": url,
-        "full_text": None,
-        "extraction_method": None,
-        "error": None,
-        "char_count": 0,
-    }
-
     try:
         with _get_http_client() as client:
             response = client.get(url, timeout=20)
             response.raise_for_status()
             html = response.text
-    except Exception as e:
-        result["error"] = f"Failed to fetch article: {str(e)}"
-        return result
+    except Exception:
+        return None
 
-    # Try newspaper3k first
+    # newspaper3k
     try:
         from newspaper import Article
         article = Article(url)
         article.set_html(html)
         article.parse()
         if article.text and len(article.text) > 100:
-            result["full_text"] = article.text
-            result["extraction_method"] = "newspaper3k"
-            result["char_count"] = len(article.text)
-            result["title"] = article.title
-            return result
+            return article.text
     except Exception:
         pass
 
-    # Fallback to trafilatura
+    # trafilatura
     try:
         import trafilatura
         text = trafilatura.extract(html, include_comments=False, include_tables=False)
         if text and len(text) > 100:
-            result["full_text"] = text
-            result["extraction_method"] = "trafilatura"
-            result["char_count"] = len(text)
-            return result
+            return text
     except Exception:
         pass
 
-    # Last resort: basic HTML text extraction
+    # BeautifulSoup fallback
     try:
         from bs4 import BeautifulSoup
-        soup = BeautifulSoup(html, 'html.parser')
-        # Remove script and style elements
-        for script in soup(["script", "style", "nav", "header", "footer", "aside"]):
-            script.decompose()
-        text = soup.get_text(separator='\n', strip=True)
-        # Clean up whitespace
-        lines = [line.strip() for line in text.split('\n') if line.strip()]
-        text = '\n'.join(lines)
+        soup = BeautifulSoup(html, "html.parser")
+        for tag in soup(["script", "style", "nav", "header", "footer", "aside"]):
+            tag.decompose()
+        lines = [l.strip() for l in soup.get_text(separator="\n").split("\n") if l.strip()]
+        text = "\n".join(lines)
         if len(text) > 100:
-            result["full_text"] = text
-            result["extraction_method"] = "beautifulsoup"
-            result["char_count"] = len(text)
-            return result
-    except Exception as e:
-        result["error"] = f"All extraction methods failed: {str(e)}"
-        return result
+            return text
+    except Exception:
+        pass
 
-    result["error"] = "Could not extract meaningful text from article"
-    return result
+    return None
 
 
-# --- Agno Toolkit ---
+# ---------------------------------------------------------------------------
+# Agno Toolkit
+# ---------------------------------------------------------------------------
 
 class NewsFeedToolkit(Toolkit):
     """
-    Fetches the latest items from approved crypto/fintech news RSS feeds.
-    Can also extract full article text from URLs.
+    Three-stage news research toolkit.
+
+    Intended call order:
+      1. list_sources()              — pick which sources are relevant to the task
+      2. fetch_feed_by_source()      — get article headlines + URLs from chosen sources
+      3. fetch_and_extract()         — fetch full article and extract relevant content
+                                       via Negentropy 4B (port 8083); only the extract
+                                       enters Tony's context
 
     Design rules:
-    - Read-only. No writes, no persistence.
-    - Structured failure on fetch errors — never raises to the agent.
-    - max_items_per_feed caps volume; increase only for archive queries.
+    - All methods return plain strings, not dicts.
+    - Full article text never enters Tony's context.
+    - max_items_per_feed caps volume at fetch time.
+    - hours filter applied server-side where possible, post-fetch otherwise.
     """
 
-    def __init__(self, max_items_per_feed: int = 10, **kwargs):
+    def __init__(self, max_items_per_feed: int = 5, **kwargs):
         self.max_items_per_feed = max_items_per_feed
         tools = [
-            self.fetch_all_feeds,
+            self.list_sources,
             self.fetch_feed_by_source,
-            self.get_full_article_text,
+            self.fetch_and_extract,
         ]
-        super().__init__(
-            name="news_feed",
-            tools=tools,
-            **kwargs,
-        )
+        super().__init__(name="news_feed", tools=tools, **kwargs)
 
-    def fetch_all_feeds(self) -> dict:
+    # ------------------------------------------------------------------
+    # Stage 1 — source selection
+    # ------------------------------------------------------------------
+
+    def list_sources(self) -> str:
         """
-        Use this tool only when the user asks for a general news briefing across all sources.
-        If the user names a specific source, use fetch_feed_by_source instead.
-        Returns a structured result containing items from each source and any fetch errors.
+        List all available news sources with descriptions.
+        Call this first to decide which sources are relevant to the research task.
+        Returns a plain text list of source keys and what each covers.
         """
-        results = {}
-        errors = []
+        lines = ["Available news sources:\n"]
+        for key, meta in APPROVED_FEEDS.items():
+            lines.append(f"{key}\n  {meta['description']}\n")
+        return "\n".join(lines)
 
-        for source_key, url in APPROVED_FEEDS.items():
-            items = _parse_feed(source_key, url, self.max_items_per_feed)
-            # Separate clean items from error entries
-            clean = [i for i in items if "error" not in i]
-            failed = [i for i in items if "error" in i]
-            if clean:
-                results[source_key] = clean
-            if failed:
-                errors.extend(failed)
+    # ------------------------------------------------------------------
+    # Stage 2 — article listing
+    # ------------------------------------------------------------------
 
-        return {
-            "status":      "partial" if errors else "ok",
-            "fetched_at":  datetime.now(timezone.utc).isoformat(),
-            "source_count": len(results),
-            "item_count":  sum(len(v) for v in results.values()),
-            "results":     results,
-            "errors":      errors,
-        }
-
-    def fetch_feed_by_source(self, source_key: str) -> dict:
+    def fetch_feed_by_source(self, source_key: str, hours: int = 24) -> str:
         """
-        Always use this tool when a broker or agent requests news from a specific source.
-        Use the source key exactly as listed: fintech_news_au, coindesk, the_block,
-        cointelegraph_reg, fintech_news_ch, decrypt, reuters_crypto.
-        Never call this with a URL — use the source key only.
-        Returns article metadata including URLs (but not full text).
-        """
-        if source_key not in APPROVED_FEEDS:
-            return {
-                "status": "error",
-                "reason": f"Unknown source key: '{source_key}'. "
-                          f"Valid keys: {list(APPROVED_FEEDS.keys())}",
-            }
-
-        url = APPROVED_FEEDS[source_key]
-        items = _parse_feed(source_key, url, self.max_items_per_feed)
-        clean = [i for i in items if "error" not in i]
-        failed = [i for i in items if "error" in i]
-
-        if failed and not clean:
-            return {
-                "status": "error",
-                "reason": failed[0]["error"],
-                "source": source_key,
-            }
-
-        return {
-            "status":     "partial" if failed else "ok",
-            "fetched_at": datetime.now(timezone.utc).isoformat(),
-            "source":     source_key,
-            "item_count": len(clean),
-            "items":      clean,
-            "errors":     failed,
-        }
-
-    def get_full_article_text(self, url: str) -> dict:
-        """
-        Fetch and extract the FULL text content of an article from its URL.
-        Use this AFTER getting article URLs from fetch_feed_by_source or fetch_all_feeds.
-        Returns the complete article text, character count, and extraction method used.
+        Fetch recent article headlines and URLs from a single source.
+        Always call list_sources first to confirm the source key.
+        Returns a plain text list of articles — title, URL, published time.
+        Use the URLs with fetch_and_extract to get article content.
 
         Args:
-            url: The full article URL to extract text from
+            source_key: Key from list_sources (e.g. 'coindesk', 'the_block').
+            hours:      How many hours back to fetch. Default 24.
         """
-        result = _extract_full_text(url)
+        if source_key not in APPROVED_FEEDS:
+            valid = ", ".join(APPROVED_FEEDS.keys())
+            return f"Unknown source '{source_key}'. Valid keys: {valid}"
 
-        return {
-            "status": "ok" if result["full_text"] else "error",
-            "fetched_at": datetime.now(timezone.utc).isoformat(),
-            "url": result["url"],
-            "char_count": result["char_count"],
-            "extraction_method": result["extraction_method"],
-            "error": result["error"],
-            "full_text_preview": result["full_text"][:500] + "..." if result["full_text"] else None,
-            "full_text": result["full_text"],  # Complete text for agent use
-        }
+        url = APPROVED_FEEDS[source_key]["url"]
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+        # Fetch more than max_items so filtering doesn't leave us empty
+        items = _parse_feed(source_key, url, max_items=self.max_items_per_feed * 3, cutoff=cutoff)
+
+        errors = [i for i in items if "error" in i]
+        clean  = [i for i in items if "error" not in i]
+
+        if errors and not clean:
+            return f"Failed to fetch {source_key}: {errors[0]['error']}"
+
+        if not clean:
+            return f"No articles found in {source_key} in the last {hours} hours."
+
+        # Cap at max_items_per_feed after time filtering
+        clean = clean[:self.max_items_per_feed]
+
+        lines = [f"[{source_key}] — last {hours}h — {len(clean)} articles:\n"]
+        for item in clean:
+            pub = item["published"] or "unknown time"
+            lines.append(f"• {item['title']}\n  {item['url']}\n  Published: {pub}\n")
+
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # Stage 3 — full text extraction
+    # ------------------------------------------------------------------
+
+    def fetch_and_extract(self, url: str, research_question: str) -> str:
+        """
+        Fetch a full article and extract only what is relevant to the research question.
+        Extraction is performed by Negentropy 4B (port 8083) — Tony never sees raw article text.
+        Returns a focused 300-400 word extract, or an error message.
+
+        Args:
+            url:               Full article URL from fetch_feed_by_source.
+            research_question: The specific question or topic you are researching.
+                               Be specific — the extract is shaped by this question.
+        """
+        # Step 1: fetch raw text
+        raw_text = _fetch_article_text(url)
+        if not raw_text:
+            return f"Could not extract text from {url}."
+
+        # Step 2: compress via extractor model — never enters Tony's context
+        result = extract_relevant(
+            article_text=raw_text,
+            research_question=research_question,
+            max_words=400,
+        )
+
+        if result["status"] == "error":
+            return f"Extraction failed for {url}: {result['error']}"
+
+        char_count = len(raw_text)
+        return (
+            f"Extract from: {url}\n"
+            f"(Article: {char_count:,} chars → compressed by extractor)\n\n"
+            f"{result['extract']}"
+        )

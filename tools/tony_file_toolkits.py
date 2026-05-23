@@ -14,12 +14,22 @@ FileScope = Literal["knowledge", "projects", "output"]
 
 _SCOPES: dict[str, tuple[Path, tuple[str, ...]]] = {
     "knowledge": (KNOWLEDGE_DIR, ("knowledge/",)),
-    "projects": (PROJECTS_DIR, ("projects/",)),
-    "output": (OUTPUT_DIR, ("output/",)),
+    "projects":  (PROJECTS_DIR,  ("projects/",)),
+    "output":    (OUTPUT_DIR,    ("output/",)),
 }
 
-_MAX_INLINE_SAVE_CHARS = 2000
-_MAX_BASE64_SIZE_MB = 10  # 10MB limit for base64 decoded files
+# read_file: cap raw file content before it enters agent context (~3k tokens)
+_MAX_READ_CHARS = 12_000
+
+# save_file / append_file: cap inline write content per call
+_MAX_INLINE_SAVE_CHARS = 2_000
+
+# save_file_base64: cap decoded binary size
+_MAX_BASE64_SIZE_MB = 10
+
+# search_files: cap number of results returned
+_MAX_SEARCH_RESULTS = 50
+
 _VALID_ENCODINGS = {"utf-8", "utf-8-sig", "latin-1", "ascii", "iso-8859-1"}
 
 _PATH_GUIDE = """
@@ -39,8 +49,6 @@ After creating a project, append its registry entry to `projects/index.md`.
 Jarvis: read-only — use `read_file` / `list_files` / `search_files` only (no `save_file`).
 """
 
-_MAX_INLINE_SAVE_CHARS = 2000
-
 
 def _validate_encoding(enc: str) -> str:
     """Validate and return safe encoding, falling back to utf-8."""
@@ -59,9 +67,8 @@ def _validate_encoding(enc: str) -> str:
 def _is_safe_path(base: Path, target: Path) -> bool:
     """Check if target is within base, handling symlinks securely."""
     try:
-        base_resolved = base.resolve()
+        base_resolved   = base.resolve()
         target_resolved = target.resolve()
-        # Check for symlinks in the path chain that could escape scope
         for part in target_resolved.parents:
             if part.is_symlink():
                 return False
@@ -85,10 +92,8 @@ def resolve_scoped_path(
     rel = path
     for prefix in prefixes:
         rel = _strip_prefix(rel, prefix)
-    # Cache resolved base_dir to prevent double resolution
     base_dir_resolved = base_dir.resolve()
     resolved = (base_dir_resolved / rel).resolve()
-    # Use safe path check that handles symlinks
     if not _is_safe_path(base_dir_resolved, resolved):
         return None, f"error: path escapes scope root or contains symlinks: {path}"
     return resolved, None
@@ -97,7 +102,7 @@ def resolve_scoped_path(
 def _strip_prefix(path: str, prefix: str) -> str:
     p = path.strip().lstrip("/")
     if p.startswith(prefix):
-        return p[len(prefix) :]
+        return p[len(prefix):]
     return p
 
 
@@ -168,11 +173,21 @@ class ScopedFileToolkit(Toolkit):
         return self._roots[key], None
 
     def read_file(self, scope: FileScope, path: str, encoding: str = "utf-8") -> str:
-        """Read a file under scope (knowledge | projects | output)."""
+        """Read a file under scope (knowledge | projects | output).
+        Files larger than 12,000 chars are truncated with a notice.
+        """
         root, err = self._resolve(scope)
         if err:
             return err
-        return root.read(path, encoding=encoding)
+        content = root.read(path, encoding=encoding)
+        if len(content) > _MAX_READ_CHARS:
+            return (
+                content[:_MAX_READ_CHARS]
+                + f"\n\n[truncated — {len(content):,} chars total, "
+                f"showing first {_MAX_READ_CHARS:,}. "
+                f"Use append_file section-by-section or request a specific section.]"
+            )
+        return content
 
     def save_file(
         self,
@@ -219,13 +234,11 @@ class ScopedFileToolkit(Toolkit):
             return err
         try:
             raw = base64.b64decode(contents_base64.strip(), validate=True)
-            # Enforce size limit on decoded content
             if len(raw) > _MAX_BASE64_SIZE_MB * 1024 * 1024:
                 return f"error: decoded file too large (max {_MAX_BASE64_SIZE_MB}MB)"
             text = raw.decode(encoding)
         except Exception as e:
             return f"error: invalid base64 or decoding failed: {e}"
-        # Validate encoding before saving
         safe_encoding = _validate_encoding(encoding)
         return root.save(text, path, overwrite=overwrite, encoding=safe_encoding)
 
@@ -236,7 +249,7 @@ class ScopedFileToolkit(Toolkit):
         text: str,
         encoding: str = "utf-8",
     ) -> str:
-        """Append text to a projects file (Tony only). Use for workfile sections; keep text under 2000 chars."""
+        """Append text to a projects file (Tony only). Keep text under 2000 chars per call."""
         if not self._allow_save:
             return "error: append_file is not available for this agent."
         if len(text) > _MAX_INLINE_SAVE_CHARS:
@@ -249,12 +262,11 @@ class ScopedFileToolkit(Toolkit):
         resolved, err = resolve_scoped_path(scope, path)
         if err:
             return err
-        # Validate encoding
         safe_encoding = _validate_encoding(encoding)
         resolved.parent.mkdir(parents=True, exist_ok=True)
         with open(resolved, "a", encoding=safe_encoding) as f:
             f.write(text)
-        return str(resolved)
+        return f"Appended {len(text)} chars to {resolved}."
 
     def list_files(self, scope: FileScope, directory: str = ".") -> str:
         """List files under a directory within scope."""
@@ -264,11 +276,21 @@ class ScopedFileToolkit(Toolkit):
         return root.list_dir(directory)
 
     def search_files(self, scope: FileScope, pattern: str) -> str:
-        """Glob search within scope (e.g. **/index.md)."""
+        """Glob search within scope (e.g. **/index.md). Returns up to 50 matches."""
         root, err = self._resolve(scope)
         if err:
             return err
-        return root.search(pattern)
+        raw = root.search(pattern)
+        # Cap results to avoid long file lists entering context
+        lines = [l for l in raw.splitlines() if l.strip()]
+        if len(lines) > _MAX_SEARCH_RESULTS:
+            truncated = "\n".join(lines[:_MAX_SEARCH_RESULTS])
+            return (
+                f"{truncated}\n"
+                f"[{len(lines)} total matches — showing first {_MAX_SEARCH_RESULTS}. "
+                f"Narrow the pattern to see more specific results.]"
+            )
+        return raw
 
 
 def tony_file_toolkit() -> ScopedFileToolkit:

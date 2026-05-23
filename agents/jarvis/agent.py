@@ -34,9 +34,6 @@ from tools.handoff_tool import handoff_to_tony
 from tools.scheduler_tools_config import jarvis_scheduler_tools
 from tools.tony_file_toolkits import jarvis_file_toolkit
 from tools.schedule_reminder_tool import schedule_reminder_in_minutes
-from tools.slack_notify_tool import post_to_slack
-from tools.slack_read_tool import SlackReadToolkit
-from tools.slack_tools_config import jarvis_slack_tools
 
 
 def load_prompt() -> str:
@@ -128,7 +125,7 @@ def create_jarvis_agent(
             f"{'='*80}\n"
             f"Your response text is streamed to Slack automatically.\n\n"
             f"DO NOT call post_to_slack with your full answer — that would duplicate the stream.\n"
-            f"If you create deliverable files, use upload_file when applicable.\n"
+            f"If you create deliverable files, use upload_deliverable_tool when applicable.\n"
             f"Slack channel: {slack_channel}\n"
             f"Thread ts: {thread_ts}\n"
             f"{'='*80}"
@@ -158,14 +155,11 @@ def create_jarvis_agent(
         session_state=session_state,
         tools=[
             jarvis_file_toolkit(),
-            jarvis_slack_tools(),
-            SlackReadToolkit(),
             FunctionTool(name="handoff_to_tony", entrypoint=handoff_to_tony),
             FunctionTool(
                 name="schedule_reminder_in_minutes",
                 entrypoint=schedule_reminder_in_minutes,
             ),
-            FunctionTool(name="post_to_slack", entrypoint=post_to_slack),
             jarvis_scheduler_tools(),
         ],
         db=db,  # Use the db instance created above
@@ -173,7 +167,7 @@ def create_jarvis_agent(
         reasoning=False,
         # History — reduced to prevent old patterns from influencing responses
         add_history_to_context=True,
-        num_history_runs=2,
+        num_history_runs=5,
         read_chat_history=False,
         read_tool_call_history=False,
         # Session summaries — DISABLED to save one LLM call per turn

@@ -69,15 +69,12 @@ def schedule_reminder_in_minutes(
         JSON string with schedule details and human-readable fire time.
     """
     if minutes < 1 or minutes > 1440:
-        return json.dumps({"error": "minutes must be between 1 and 1440"})
+        # errors
+        return "minutes must be between 1 and 1440."
 
     if not session_id or not slack_channel or not thread_ts:
-        return json.dumps(
-            {
-                "error": "session_id, slack_channel, and thread_ts are required "
-                "(use values from ## Slack location in Additional Context)."
-            }
-        )
+        # errors
+        return "session_id, slack_channel, and thread_ts are required."
 
     now = datetime.now(MELBOURNE)
     target = now + timedelta(minutes=minutes)
@@ -106,22 +103,11 @@ def schedule_reminder_in_minutes(
             if_exists="update",
         )
     except Exception as exc:
-        return json.dumps({"error": str(exc)})
+        # errors
+        return f"Failed to create reminder: {exc}"
 
-    return json.dumps(
-        {
-            "status": "created",
-            "id": schedule.id,
-            "name": schedule_name,
-            "cron": cron,
-            "timezone": DEFAULT_TIMEZONE,
-            "fires_at": target.strftime("%Y-%m-%d %H:%M %Z"),
-            "fires_in_minutes": minutes,
-            "endpoint": DEFAULT_ENDPOINT,
-            "message": message,
-            "session_id": session_id,
-            "slack_channel": slack_channel,
-            "thread_ts": thread_ts,
-            "auto_disable_after_run": True,
-        }
+    # success
+    return (
+        f"Reminder set. Fires in {minutes} min "
+        f"at {target.strftime('%H:%M %Z')} — schedule '{schedule_name}' ({schedule.id})."
     )

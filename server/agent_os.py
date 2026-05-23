@@ -231,9 +231,14 @@ def _build_tony(ctx: RequestContext) -> Agent:
     slack_channel = data.get("slack_channel", "")
     thread_ts = data.get("thread_ts", "")
     if project and project != "current" and (not slack_channel or not thread_ts):
-        from tools.create_project_schedule_tool import _load_handoff
-
-        handoff = _load_handoff(project)
+        handoff_path = os.path.join("projects", project, "handoff.json")
+        handoff = {}
+        if os.path.exists(handoff_path):
+            try:
+                with open(handoff_path, encoding="utf-8") as f:
+                    handoff = json.load(f)
+            except Exception as e:
+                log_info(f"[factory:tony] error loading handoff.json: {e}")
         if not slack_channel and handoff.get("slack_channel"):
             slack_channel = str(handoff["slack_channel"])
             log_info(f"[factory:tony] slack_channel from handoff.json: {slack_channel}")

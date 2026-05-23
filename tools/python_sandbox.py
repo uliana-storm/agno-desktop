@@ -12,7 +12,8 @@ from typing import Any, Optional
 from agno.tools.python import PythonTools, warn
 from agno.utils.log import log_debug, log_info, logger
 
-_MAX_OUTPUT_CHARS = 50_000
+# Hard cap on combined stdout + stderr returned to agent context (~1.25k tokens)
+_MAX_OUTPUT_CHARS = 5_000
 
 _ALLOWED_BUILTINS = (
     "abs",
@@ -138,8 +139,8 @@ class _TimeoutError(Exception):
     pass
 
 
-def _timeout(seconds=30):
-    """Decorator to add timeout to function execution using SIGALRM."""
+def _timeout(seconds: int = 30):
+    """Decorator to add a hard timeout using SIGALRM. Applied to all run methods."""
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -160,8 +161,7 @@ def _truncate(text: str, limit: int = _MAX_OUTPUT_CHARS) -> str:
     text = text.strip()
     if len(text) <= limit:
         return text
-    # Account for truncation suffix length to stay under limit
-    suffix = "\n...(truncated)"
+    suffix = f"\n...(truncated — {len(text):,} chars total, showing first {limit:,})"
     return text[:limit - len(suffix)] + suffix
 
 
@@ -178,13 +178,11 @@ def _format_run_result(
         parts.append(out)
     if err:
         parts.append(f"[stderr]\n{err}")
-
     if variable_to_return:
         variable_value = locals_after.get(variable_to_return)
         if variable_value is None:
             return f"Variable {variable_to_return} not found"
         parts.append(f"[{variable_to_return}]\n{_truncate(str(variable_value))}")
-
     if parts:
         return "\n".join(parts)
     return "successfully ran python code (no output)"
@@ -230,11 +228,12 @@ class SandboxPythonTools(PythonTools):
                 self.safe_locals,
             )
         except _TimeoutError as e:
-            return f"Error: Code execution timeout - {e}"
+            return f"Error: Code execution timeout — {e}"
         except Exception as e:
             logger.exception("Error running python code")
             return f"Error running python code: {e}"
 
+    @_timeout(30)
     def save_to_file_and_run(
         self,
         file_name: str,
@@ -264,7 +263,6 @@ class SandboxPythonTools(PythonTools):
                     init_globals=self.safe_globals,
                     run_name="__main__",
                 )
-
             if variable_to_return:
                 variable_value = globals_after_run.get(variable_to_return)
                 if variable_value is None:
@@ -281,10 +279,13 @@ class SandboxPythonTools(PythonTools):
                 None,
                 {},
             )
+        except _TimeoutError as e:
+            return f"Error: Code execution timeout — {e}"
         except Exception as e:
             logger.exception("Error saving and running code")
             return f"Error saving and running code: {e}"
 
+    @_timeout(30)
     def run_python_file_return_variable(
         self, file_name: str, variable_to_return: Optional[str] = None
     ) -> str:
@@ -303,7 +304,6 @@ class SandboxPythonTools(PythonTools):
                     init_globals=self.safe_globals,
                     run_name="__main__",
                 )
-
             if variable_to_return:
                 variable_value = globals_after_run.get(variable_to_return)
                 if variable_value is None:
@@ -320,6 +320,8 @@ class SandboxPythonTools(PythonTools):
                 None,
                 {},
             )
+        except _TimeoutError as e:
+            return f"Error: Code execution timeout — {e}"
         except Exception as e:
             logger.exception("Error running file")
             return f"Error running file: {e}"

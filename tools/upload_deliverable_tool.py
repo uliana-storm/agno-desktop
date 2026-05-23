@@ -62,6 +62,8 @@ def upload_deliverable(
         if initial_comment:
             kwargs["initial_comment"] = initial_comment
         client.files_upload_v2(**kwargs)
-        return json.dumps({"ok": True, "filename": name, "path": str(resolved)})
+        # success
+        return f"Uploaded {name} to {channel}."
     except Exception as e:
-        return json.dumps({"ok": False, "error": str(e)})
+        # error
+        return f"Upload failed: {e}"

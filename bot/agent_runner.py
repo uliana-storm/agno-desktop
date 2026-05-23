@@ -97,14 +97,16 @@ def _stream_agent_run(
             _debug(f"[TIMER] ModelRequestCompleted: {time.time()-t0:.3f}s")
 
         elif event == RunEvent.tool_call_started:
-            tool_name = getattr(getattr(chunk, "tool", None), "tool_name", "unknown")
-            if tool_name != "handoff_to_tony":
-                tool_args = getattr(getattr(chunk, "tool", None), "tool_args", None)
-                client.chat_postMessage(
-                    channel=channel,
-                    thread_ts=thread_ts,
-                    text=f"🔧 `{tool_name}` — `{tool_args}`",
-                )
+            if agent_debug_enabled():
+                tool_name = getattr(getattr(chunk, "tool", None), "tool_name", "unknown")
+                if tool_name != "handoff_to_tony":
+                    tool_args = getattr(getattr(chunk, "tool", None), "tool_args", None)
+                    args_preview = str(tool_args)[:200] if tool_args else ""
+                    client.chat_postMessage(
+                        channel=channel,
+                        thread_ts=thread_ts,
+                        text=f"🔧 `{tool_name}` — `{args_preview}`",
+                    )
 
         elif event == RunEvent.tool_call_completed:
             tool_name = getattr(getattr(chunk, "tool", None), "tool_name", "unknown")
