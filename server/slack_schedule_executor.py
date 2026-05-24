@@ -108,7 +108,7 @@ class SlackStreamingScheduleExecutor(ScheduleExecutor):
         t0 = time.time()
 
         try:
-            response, new_files, _ = run_agent(
+            response, new_files, _, _ = run_agent(
                 agent,
                 message,
                 client,

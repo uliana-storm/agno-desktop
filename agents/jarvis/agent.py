@@ -34,6 +34,7 @@ from tools.handoff_tool import handoff_to_tony
 from tools.scheduler_tools_config import jarvis_scheduler_tools
 from tools.tony_file_toolkits import jarvis_file_toolkit
 from tools.schedule_reminder_tool import schedule_reminder_in_minutes
+from tools.slack_fetch_tools import SlackFetchToolkit
 
 
 def load_prompt() -> str:
@@ -161,6 +162,7 @@ def create_jarvis_agent(
                 entrypoint=schedule_reminder_in_minutes,
             ),
             jarvis_scheduler_tools(),
+            SlackFetchToolkit(),
         ],
         db=db,  # Use the db instance created above
         session_id=session_id,
@@ -178,7 +180,7 @@ def create_jarvis_agent(
         # Compression — count-based, Jarvis tool results are small
         compress_tool_results=True,
         compression_manager=CompressionManager(
-            compress_tool_results_limit=8,
+            compress_tool_results_limit=20,
         ),
         # Misc
         add_datetime_to_context=False,  # Manually injected only for scheduled runs

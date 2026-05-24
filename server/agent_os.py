@@ -111,7 +111,7 @@ from agno.factory.utils import RequestContext
 from agno.os import AgentOS
 
 from agents.jarvis.agent import create_jarvis_agent
-from agents.task_context import eod_run_instructions, slack_location_context, task_context
+from agents.task_context import slack_location_context
 from agents.tony.agent import create_tony_agent
 from server.paths import JARVIS_MEMORY_DB, TONY_MEMORY_DB, ensure_dirs
 from server.scheduler_db import get_scheduler_db
@@ -177,10 +177,6 @@ def _build_context(data: dict) -> str:
     if channel:
         sid = data.get("session_id", "")
         parts.append(slack_location_context(channel, thread, session_id=sid or None))
-    task = data.get("task", "")
-    if task:
-        parts.append(task_context(task, data.get("message", "")))
-        parts.append(eod_run_instructions(task))
     return "".join(parts)
 
 

@@ -92,7 +92,7 @@ from agents.task_context import (
     slack_location_context,
     tony_slack_instructions,
 )
-from bot.agent_runner import post_timing_message, run_agent, upload_files
+from bot.agent_runner import cancel_key_for, cancel_run, post_timing_message, run_agent, upload_files
 from bot.router import register_thread, route, unregister_thread
 from server.paths import OUTPUT_DIR, ensure_dirs
 
@@ -167,6 +167,9 @@ def format_project_options(matches: list[dict]) -> str:
 # Core message handler
 # ---------------------------------------------------------------------------
 
+_STOP_RE = re.compile(r"(?i)^(stop|cancel|abort|halt|quit|end)\.?$")
+
+
 def handle_message(body: dict, client, say) -> None:
     t0 = time.time()
     print(f"[TIMER] message received: {t0:.3f}", flush=True)
@@ -181,6 +184,22 @@ def handle_message(body: dict, client, say) -> None:
 
     if not prompt:
         say(text="What would you like me to help you with?", thread_ts=thread_ts)
+        return
+
+    run_key = cancel_key_for(channel, thread_ts, channel_type)
+    if _STOP_RE.match(prompt):
+        if cancel_run(run_key):
+            client.chat_postMessage(
+                channel=channel,
+                thread_ts=thread_ts,
+                text="⏹️ Stopping the current run...",
+            )
+        else:
+            client.chat_postMessage(
+                channel=channel,
+                thread_ts=thread_ts,
+                text="No active run to cancel in this conversation.",
+            )
         return
 
     routing      = route(prompt, thread_ts)
@@ -240,11 +259,14 @@ def handle_message(body: dict, client, say) -> None:
                     slack_channel=channel,
                     thread_ts=thread_ts,
                 )
-                response, new_files, _ = run_agent(
+                response, new_files, _, was_cancelled = run_agent(
                     tony, prompt, client, channel, thread_ts,
                     tony_session_id, t0, stream_to_slack=True,
+                    cancel_key=run_key,
                 )
                 print(f"\n[Tony] response length: {len(response)} chars", flush=True)
+                if was_cancelled:
+                    return
                 post_timing_message(client, channel, thread_ts, perf_counter() - start)
                 if new_files:
                     upload_files(client, channel, thread_ts, new_files)
@@ -295,11 +317,15 @@ def handle_message(body: dict, client, say) -> None:
                 thread_ts=thread_ts,
                 is_scheduled=False,
             )
-            response, new_files, handoff_project = run_agent(
+            response, new_files, handoff_project, was_cancelled = run_agent(
                 jarvis, prompt, client, channel, thread_ts,
                 jarvis_session_id, t0, stream_to_slack=True,
+                cancel_key=run_key,
             )
             print(f"\n[Jarvis] response length: {len(response)} chars", flush=True)
+
+            if was_cancelled:
+                return
 
             # ----------------------------------------------------------
             # Handoff → Tony
@@ -330,10 +356,13 @@ def handle_message(body: dict, client, say) -> None:
                     thread_ts=thread_ts,
                 )
                 tony_prompt = build_tony_handoff_prompt(handoff_project, handoff_data, prompt)
-                tony_response, tony_files, _ = run_agent(
+                tony_response, tony_files, _, was_cancelled = run_agent(
                     tony, tony_prompt, client, channel, thread_ts,
                     tony_session_id, t0, stream_to_slack=True,
+                    cancel_key=run_key,
                 )
+                if was_cancelled:
+                    return
                 print(
                     f"[handoff] Tony response: {len(tony_response)} chars, "
                     f"files: {tony_files}",

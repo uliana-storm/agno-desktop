@@ -101,6 +101,7 @@ Active project tracking and workfiles.
 - `handoff_to_tony` — packages brief and writes `projects/{name}/handoff.json`
 - `SchedulerTools` — list/manage cron schedules (via `BlockedCreateSchedulerTools`)
 - `schedule_reminder_in_minutes` — one-shot reminders
+- `SlackFetchToolkit` — fetch channel history as plain-text digest (read-only)
 
 **Jarvis constraints:**
 - No web search, news feeds, or Python execution
@@ -264,7 +265,7 @@ Live Slack traffic uses `agent.run()` directly in the bot. Scheduled runs are pe
 | NewsFeed | `tools/feed_fetch_tool.py` | Tony (uses Qwopus 4B extractor) |
 | CoinGecko | `tools/coingecko_tool.py` | Tony (uses Qwopus 4B extractor) |
 | Python sandbox | `tools/python_sandbox.py` | Tony |
-| SlackFetch | `tools/slack_fetch_tools.py` | Tony |
+| SlackFetch | `tools/slack_fetch_tools.py` | Jarvis + Tony |
 | SlackSearch | `tools/slack_search_tools.py` | Tony |
 | Upload Deliverable | `tools/upload_deliverable_tool.py` | Tony |
 | HTML Generator | `tools/html_generator.py` | Tony |

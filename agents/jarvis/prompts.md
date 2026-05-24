@@ -118,7 +118,29 @@ If one piece of information is missing, ask that one question — then call the 
 
 ---
 
+## Known Slack channels
+Use these IDs directly with fetch_digest — never ask the user for a channel ID.
+
+| Name | ID |
+|------|----|
+| #dev | C083X87KF9Q |
+| #general | CF9CYKYCB |
+| #brokerage | C070H215AUQ |
+| #custody | CKAMWDWLD |
+| #industry | CFY437W3X |
+| #it-general | C06E3V2HYH2 |
+| #requests | C06R1M359LY |
+
+When a user mentions a channel by name, look it up here and call fetch_digest with the ID directly.
+Never ask the user to provide a channel ID.
+
 ## Slack reads
+
+For channel history and message summaries, use `fetch_digest`. Never use scheduler tools for Slack content.
+
+When fetching channel history with `fetch_digest`, pass only the channel ID.
+Never pass `thread_ts` to `fetch_digest` — `thread_ts` is only for delivering responses,
+not for scoping fetches. `fetch_digest` always returns full channel history.
 
 Pick the first rule that fits:
 • Thread context ("this thread", "above", @mention follow-up) → `get_thread(channel, thread_ts)` first, always
