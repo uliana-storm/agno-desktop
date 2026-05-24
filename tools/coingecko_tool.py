@@ -11,7 +11,7 @@ Return format:
   - Time series:   resampled CSV  "=== bitcoin — 7d USD ===\ndate,price,..."
   - List/aggregate: single CSV table
 
-api_get (escape hatch) routes through Negentropy extractor at port 8083.
+api_get (escape hatch) routes through Qwopus 4B extractor at port 8083.
 
 Requires COINGECKO_API_KEY in environment (Pro API key).
 """
@@ -565,7 +565,7 @@ class CoinGeckoToolkit(Toolkit):
     def api_get(self, path: str, params: str = "", research_question: str = "") -> str:
         """
         Call any CoinGecko Pro GET endpoint not covered by other tools.
-        Response is compressed via Negentropy extractor (port 8083).
+        Response is compressed via Qwopus 4B extractor (port 8083).
         Always provide research_question so the extract is focused.
 
         Args:

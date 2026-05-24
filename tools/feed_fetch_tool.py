@@ -5,7 +5,7 @@ Fetches and parses RSS feeds from approved sources.
 Three-stage design:
   1. list_sources()             → model picks relevant sources
   2. fetch_feed_by_source()     → model picks relevant articles
-  3. fetch_and_extract()        → full text fetched + compressed via Negentropy 4B
+  3. fetch_and_extract()        → full text fetched + compressed via Qwopus 4B
                                   only the extract enters the main model context
 
 Full article text never reaches Tony directly.
@@ -213,7 +213,7 @@ class NewsFeedToolkit(Toolkit):
       1. list_sources()              — pick which sources are relevant to the task
       2. fetch_feed_by_source()      — get article headlines + URLs from chosen sources
       3. fetch_and_extract()         — fetch full article and extract relevant content
-                                       via Negentropy 4B (port 8083); only the extract
+                                       via Qwopus 4B (port 8083); only the extract
                                        enters Tony's context
 
     Design rules:
@@ -298,7 +298,7 @@ class NewsFeedToolkit(Toolkit):
     def fetch_and_extract(self, url: str, research_question: str) -> str:
         """
         Fetch a full article and extract only what is relevant to the research question.
-        Extraction is performed by Negentropy 4B (port 8083) — Tony never sees raw article text.
+        Extraction is performed by Qwopus 4B (port 8083) — Tony never sees raw article text.
         Returns a focused 300-400 word extract, or an error message.
 
         Args:

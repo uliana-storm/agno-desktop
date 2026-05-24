@@ -1,7 +1,7 @@
 """
 extractor_client.py
 
-Stateless extraction client for the Negentropy 4B model on port 8083.
+Stateless extraction client for the Qwopus 4B model on port 8083.
 Sends article text + research question, returns a focused extract.
 
 Reusable beyond news feeds — any tool that needs to compress raw text
@@ -9,7 +9,7 @@ before it enters the main model context can use this.
 
 Config (in .env):
     MODEL_EXTRACTOR_URL=http://localhost:8083/v1/chat/completions
-    MODEL_EXTRACTOR_ID=negentropy-4b   # must match llama.cpp --alias
+    MODEL_EXTRACTOR_ID=Qwopus3.5-4B-v3-MTP-Q5_K_M.gguf   # must match llama.cpp --alias
 """
 
 import os
@@ -22,7 +22,7 @@ EXTRACTOR_URL = os.environ.get(
     "MODEL_EXTRACTOR_URL",
     "http://localhost:8083/v1/chat/completions",
 )
-EXTRACTOR_MODEL = os.environ.get("MODEL_EXTRACTOR_ID", "negentropy-4b")
+EXTRACTOR_MODEL = os.environ.get("MODEL_EXTRACTOR_ID", "Qwopus3.5-4B-v3-MTP-Q5_K_M.gguf")
 
 SYSTEM_PROMPT = (
     "You are a precise extraction assistant. "
@@ -50,7 +50,7 @@ def extract_relevant(
     timeout: int = EXTRACTOR_TIMEOUT,
 ) -> dict:
     """
-    Send article text to the Negentropy extractor model and return a focused extract.
+    Send article text to the Qwopus 4B extractor model and return a focused extract.
 
     Args:
         article_text:       Raw article text from newspaper3k/trafilatura.
