@@ -1,6 +1,5 @@
 """Upload deliverables from disk — avoids passing large file bodies in tool-call JSON."""
 
-import json
 import os
 from pathlib import Path
 from typing import Literal, Optional
@@ -42,28 +41,24 @@ def upload_deliverable(
     """
     resolved, err = resolve_scoped_path(scope, path)
     if err:
-        return json.dumps({"ok": False, "error": err})
+        return f"Upload failed: {err}"
     if not resolved.is_file():
-        return json.dumps(
-            {"ok": False, "error": f"not a file: {resolved} (use save_file first)"}
-        )
+        return f"Upload failed: {resolved} is not a file — use save_file first."
 
     name = (filename or resolved.name).strip() or resolved.name
     try:
         client = _client()
         kwargs: dict = {
             "channel": channel,
-            "file": str(resolved),
+            "file":     str(resolved),
             "filename": name,
-            "title": name,
+            "title":    name,
         }
         if thread_ts:
             kwargs["thread_ts"] = thread_ts
         if initial_comment:
             kwargs["initial_comment"] = initial_comment
         client.files_upload_v2(**kwargs)
-        # success
         return f"Uploaded {name} to {channel}."
     except Exception as e:
-        # error
         return f"Upload failed: {e}"

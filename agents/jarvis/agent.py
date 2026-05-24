@@ -125,7 +125,7 @@ def create_jarvis_agent(
             f"{'='*80}\n"
             f"Your response text is streamed to Slack automatically.\n\n"
             f"DO NOT call post_to_slack with your full answer — that would duplicate the stream.\n"
-            f"If you create deliverable files, use upload_deliverable_tool when applicable.\n"
+            f"If you create deliverable files, use upload_deliverable when applicable.\n"
             f"Slack channel: {slack_channel}\n"
             f"Thread ts: {thread_ts}\n"
             f"{'='*80}"

@@ -9,7 +9,7 @@ A two-agent research system built on the Agno framework, featuring:
 - **Tony**: Research specialist (web search, NewsFeed with compression, CoinGecko with compression, Python, file I/O, SlackFetch, SlackSearch, scheduling)
 - **AgentOS** (port 7777): API server with native cron scheduler — executes scheduled agent runs
 - **Slack bot** (Socket Mode): Live conversation dispatch to Jarvis or Tony
-- **Negentropy Extractor** (port 8083): Stateless extraction model used to compress raw text (such as articles and APIs) before entering main model context
+- **Qwopus 4B Extractor** (port 8083): Stateless extraction model used to compress raw text (such as articles and APIs) before entering main model context
 - Shared knowledge base with project memory
 - Persistent per-agent SQLite memory + shared scheduler database (`memory/agno.db`)
 
@@ -117,8 +117,8 @@ Active project tracking and workfiles.
 
 **Tony tools:**
 - `BraveSearchToolkit` — web search via Brave API
-- `NewsFeedToolkit` — RSS feeds for crypto/fintech news (uses Negentropy 4B compression)
-- `CoinGeckoToolkit` — crypto prices and market data (uses Negentropy 4B compression)
+- `NewsFeedToolkit` — RSS feeds for crypto/fintech news (uses Qwopus 4B compression)
+- `CoinGeckoToolkit` — crypto prices and market data (uses Qwopus 4B compression)
 - `SandboxPythonTools` — restricted Python execution sandbox
 - `FileTools` — scoped `read_file`, `save_file` on project workfiles
 - `SlackFetchToolkit` — fetch chronological history of Slack channels as digests
@@ -151,14 +151,14 @@ Active project tracking and workfiles.
 | File | Purpose |
 |------|---------|
 | `brave_search_tool.py` | **BraveSearchToolkit** — web search via Brave API (Tony) |
-| `feed_fetch_tool.py` | **NewsFeedToolkit** — RSS feeds for news, full text compressed/extracted via Negentropy 4B before entering Tony context (Tony) |
-| `coingecko_tool.py` | **CoinGeckoToolkit** — crypto market data, routes Pro API and raw gets through Negentropy 4B extractor if needed (Tony) |
+| `feed_fetch_tool.py` | **NewsFeedToolkit** — RSS feeds for news, full text compressed/extracted via Qwopus 4B before entering Tony context (Tony) |
+| `coingecko_tool.py` | **CoinGeckoToolkit** — crypto market data, routes Pro API and raw gets through Qwopus 4B extractor if needed (Tony) |
 | `handoff_tool.py` | `handoff_to_tony` — Jarvis-only project brief handoff |
 | `html_generator.py` | `generate_html_report()`, `generate_html_from_markdown()` — HTML report generation with professional styling, saves to `output/reports/` |
 | `tony_file_toolkits.py` | Scoped `read_file` / `save_file` / `list_files` / `search_files` with explicit `scope` validation and path-traversal safety |
 | `scheduler_tools_config.py` | `BlockedCreateSchedulerTools` — blocks raw `create_schedule`; directs users to reminders and project schedule wrappers |
 | `schedule_reminder_tool.py` | One-shot Jarvis reminders (`schedule_reminder_in_minutes`) |
-| `extractor_client.py` | Stateless extraction client for Negentropy 4B on port 8083; compresses raw text before it hits main model context |
+| `extractor_client.py` | Stateless extraction client for Qwopus 4B on port 8083; compresses raw text before it hits main model context |
 | `slack_fetch_tools.py` | **SlackFetchToolkit** — fetches channel history and returns compressed plain-text digests |
 | `slack_helpers.py` | Shared pure-utility helpers (resolvers, clients, formatters) for Slack tools |
 | `slack_search_tools.py` | **SlackSearchToolkit** — intent-based native search queries translated into Slack search modifiers |
@@ -221,7 +221,7 @@ Both the Slack bot and AgentOS scheduled runs (when `slack_channel` + `thread_ts
 |--------|-----------------|-----------------|
 | **Role** | First contact, KB answers, project intake, reminders | Research, writing, analysis, file creation |
 | **Model** | Port 8082 (Qwopus-GLM-18B) | Port 8081 (Qwopus 35B) |
-| **Tools** | Scoped files (read-only), handoff, `schedule_reminder_in_minutes`, scheduler list/manage | Search, NewsFeed (with Negentropy), CoinGecko (with Negentropy), Python sandbox, Scoped files, SlackFetch, SlackSearch, upload_deliverable |
+| **Tools** | Scoped files (read-only), handoff, `schedule_reminder_in_minutes`, scheduler list/manage | Search, NewsFeed (with Qwopus 4B), CoinGecko (with Qwopus 4B), Python sandbox, Scoped files, SlackFetch, SlackSearch, upload_deliverable |
 | **Writes to** | Nothing (handoff tool writes project dirs) | `output/`, `projects/` workfiles |
 | **Memory DB** | `memory/jarvis_memory.db` | `memory/tony_memory.db` |
 | **Session ID** | `jarvis-{slack_user_id}` | `tony-{slack_user_id}-{thread_ts}` |
@@ -234,7 +234,7 @@ Both the Slack bot and AgentOS scheduled runs (when `slack_channel` + `thread_ts
 | **AgentOS** | 7777 | Agent API + cron scheduler poller |
 | **Slack bot** | — | Socket Mode; calls agents in-process |
 | **Tony project server** | 8090 | Serves deployed project apps |
-| **Local LLMs** | 8081, 8082, 8083 | Model endpoints for Tony (8081), Jarvis (8082), and Negentropy Extractor (8083) |
+| **Local LLMs** | 8081, 8082, 8083 | Model endpoints for Tony (8081), Jarvis (8082), and Qwopus 4B Extractor (8083) |
 
 Live Slack traffic uses `agent.run()` directly in the bot. Scheduled runs are persisted to `memory/agno.db` and executed by AgentOS calling `/agents/{jarvis|tony}/runs`.
 
@@ -261,8 +261,8 @@ Live Slack traffic uses `agent.run()` directly in the bot. Scheduled runs are pe
 | schedule_reminder_in_minutes | `tools/schedule_reminder_tool.py` | Jarvis |
 | list_schedules, enable/disable, … | `tools/scheduler_tools_config.py` | Both (`create_schedule` blocked) |
 | Brave Search | `tools/brave_search_tool.py` | Tony |
-| NewsFeed | `tools/feed_fetch_tool.py` | Tony (uses Negentropy extractor) |
-| CoinGecko | `tools/coingecko_tool.py` | Tony (uses Negentropy extractor) |
+| NewsFeed | `tools/feed_fetch_tool.py` | Tony (uses Qwopus 4B extractor) |
+| CoinGecko | `tools/coingecko_tool.py` | Tony (uses Qwopus 4B extractor) |
 | Python sandbox | `tools/python_sandbox.py` | Tony |
 | SlackFetch | `tools/slack_fetch_tools.py` | Tony |
 | SlackSearch | `tools/slack_search_tools.py` | Tony |
@@ -275,7 +275,7 @@ Live Slack traffic uses `agent.run()` directly in the bot. Scheduled runs are pe
 |------|------|----------|-------|
 | **qwopus** | 8081 | Qwopus3.6-35B-A3B-v1-Q4_K_M.gguf | Tony (default) |
 | **gemma** | 8082 | gemma-4-26B-A4B-it-UD-Q5_K_XL.gguf | Jarvis |
-| **negentropy-4b** | 8083 | negentropy-4b | Extractor (used by NewsFeed and CoinGecko) |
+| **qwopus-4b** | 8083 | Qwopus3.5-4B-v3-MTP-Q5_K_M.gguf | Extractor (used by NewsFeed and CoinGecko) |
 
 ### Output Format
 
@@ -305,8 +305,8 @@ SLACK_BOT_TOKEN=xoxb-...          # Slack bot OAuth token
 SLACK_APP_TOKEN=xapp-...          # Slack app-level token (Socket Mode)
 BRAVE_API_KEY=...                 # Brave Search API key
 COINGECKO_API_KEY=...             # CoinGecko API key (Tony)
-MODEL_EXTRACTOR_URL=http://localhost:8083/v1/chat/completions  # Negentropy Extractor endpoint
-MODEL_EXTRACTOR_ID=negentropy-4b   # Negentropy model ID matching llama.cpp --alias
+MODEL_EXTRACTOR_URL=http://localhost:8083/v1/chat/completions  # Qwopus 4B Extractor endpoint
+MODEL_EXTRACTOR_ID=Qwopus3.5-4B-v3-MTP-Q5_K_M.gguf   # Qwopus 4B model ID matching llama.cpp --alias
 ```
 
 **Slack bot scopes** (EOD + thread reads): `channels:history`, `channels:read`, `groups:history`, `groups:read`, `users:read`, `chat:write`, `reactions:read`. **Event:** `member_joined_channel` for EOD channel auto-enroll.

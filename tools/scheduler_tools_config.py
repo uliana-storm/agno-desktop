@@ -1,18 +1,15 @@
 """AgentOS scheduler toolkits — block raw create_schedule; use wrappers for creates."""
 
-import json
 from typing import Any
 
 from agno.tools.scheduler import SchedulerTools
 
 from server.scheduler_db import get_scheduler_db
 
-_CREATE_BLOCKED_MSG = json.dumps(
-    {
-        "error": "create_schedule is disabled. "
-        "Jarvis: use schedule_reminder_in_minutes for relative reminders. "
-        "Tony: use create_project_schedule for recurring project cron jobs.",
-    }
+_CREATE_BLOCKED_MSG = (
+    "create_schedule is disabled. "
+    "Jarvis: use schedule_reminder_in_minutes for one-off reminders. "
+    "Tony: use create_project_schedule for recurring project schedules."
 )
 
 
