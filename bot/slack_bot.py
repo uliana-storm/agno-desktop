@@ -88,11 +88,13 @@ from agents.jarvis.agent import create_jarvis_agent
 from agents.tony.agent import create_tony_agent
 from agents.task_context import (
     looks_like_scheduling_request,
+    melbourne_datetime_context,
     scheduling_datetime_context,
     slack_location_context,
     tony_slack_instructions,
 )
 from bot.agent_runner import cancel_key_for, cancel_run, post_timing_message, run_agent, upload_files
+from bot.jarvis_ack_phrases import random_jarvis_ack
 from bot.router import register_thread, route, unregister_thread
 from server.paths import OUTPUT_DIR, ensure_dirs
 
@@ -296,12 +298,13 @@ def handle_message(body: dict, client, say) -> None:
         ack_text = "I found some matching projects. Let me help you select one... 🔍"
     else:
         jarvis_context = ""
-        ack_text = "Looking into this for you... 🔍"
+        ack_text = random_jarvis_ack()
 
     if channel:
         jarvis_context = prepend_slack_location(
             jarvis_context, channel, thread_ts, jarvis_session_id
         )
+        jarvis_context += melbourne_datetime_context()
         if looks_like_scheduling_request(prompt):
             jarvis_context += scheduling_datetime_context(prompt)
 

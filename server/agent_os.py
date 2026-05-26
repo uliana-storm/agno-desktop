@@ -107,6 +107,7 @@ load_dotenv(_root / ".env")
 from agno.agent import Agent
 from agno.agent.factory import AgentFactory
 from agno.db.sqlite import SqliteDb
+from server.trimmed_sqlite_db import TrimmedSqliteDb
 from agno.factory.utils import RequestContext
 from agno.os import AgentOS
 
@@ -266,7 +267,7 @@ def create_agent_os() -> AgentOS:
 
     jarvis_factory = AgentFactory(
         id="jarvis",
-        db=SqliteDb(db_file=str(JARVIS_MEMORY_DB)),
+        db=TrimmedSqliteDb(db_file=str(JARVIS_MEMORY_DB)),
         factory=_build_jarvis,
         name="Jarvis",
         description="Intake coordinator — knowledge base, routing, scheduling",

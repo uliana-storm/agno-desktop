@@ -7,14 +7,16 @@ No Agno toolkit here — pure helpers only.
 
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
 _CHANNEL_ID_RE = re.compile(r"^[CGD][A-Z0-9]+$")
 _MAX_MSG_CHARS = 300
+_MELBOURNE = ZoneInfo("Australia/Melbourne")
 
 
 # ---------------------------------------------------------------------------
@@ -96,11 +98,20 @@ def resolve_user_names(client: WebClient, user_ids: list[str]) -> dict[str, str]
 # ---------------------------------------------------------------------------
 
 def ts_to_time(ts: str) -> str:
-    """Convert Slack timestamp to HH:MM string."""
+    """Convert Slack timestamp to HH:MM string (Australia/Melbourne)."""
     try:
-        dt = datetime.fromtimestamp(float(ts), tz=timezone.utc)
+        dt = datetime.fromtimestamp(float(ts), tz=_MELBOURNE)
         return dt.strftime("%H:%M")
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OSError):
+        return "??:??"
+
+
+def ts_to_datetime(ts: str) -> str:
+    """Convert Slack timestamp to DD/MM HH:MM string (Australia/Melbourne)."""
+    try:
+        dt = datetime.fromtimestamp(float(ts), tz=_MELBOURNE)
+        return dt.strftime("%d/%m %H:%M")
+    except (ValueError, TypeError, OSError):
         return "??:??"
 
 

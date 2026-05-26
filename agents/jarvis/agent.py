@@ -19,7 +19,7 @@ if str(_parent_dir) not in sys.path:
     sys.path.insert(0, str(_parent_dir))
 
 from agno.agent import Agent
-from agno.db.sqlite import SqliteDb  # TODO: upgrade to SqliteStorage when available
+from server.trimmed_sqlite_db import TrimmedSqliteDb
 from agno.tools.function import Function as FunctionTool
 from agno.compression import CompressionManager
 from agno.utils.log import log_info
@@ -35,6 +35,7 @@ from tools.scheduler_tools_config import jarvis_scheduler_tools
 from tools.tony_file_toolkits import jarvis_file_toolkit
 from tools.schedule_reminder_tool import schedule_reminder_in_minutes
 from tools.slack_fetch_tools import SlackFetchToolkit
+from tools.slack_post_tool import post_to_slack_channel_tool
 
 
 def load_prompt() -> str:
@@ -77,7 +78,7 @@ def create_jarvis_agent(
     # Jarvis reads them reactively via FileTools when needed
     
     # Database for session persistence
-    db = SqliteDb(db_file=str(JARVIS_MEMORY_DB))
+    db = TrimmedSqliteDb(db_file=str(JARVIS_MEMORY_DB))
     
     # Try to extract slack info from additional_context if not provided directly
     # This handles polling where agent is recreated without factory_input
@@ -163,6 +164,10 @@ def create_jarvis_agent(
             ),
             jarvis_scheduler_tools(),
             SlackFetchToolkit(),
+            FunctionTool(
+                name="post_to_slack_channel",
+                entrypoint=post_to_slack_channel_tool,
+            ),
         ],
         db=db,  # Use the db instance created above
         session_id=session_id,
