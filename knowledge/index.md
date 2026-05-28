@@ -12,6 +12,6 @@ path: knowledge/marketing/index.md
 desc: regulatory requirements, GDPR, risk management (department KB)
 path: knowledge/compliance/index.md
 
-## content
-desc: content creation, SEO, article templates
-path: knowledge/content/index.md
+## research
+desc: news sources, reserach template, research prompts
+path: knowledge/research/index.md

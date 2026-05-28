@@ -45,7 +45,7 @@ Use `read_file`, `list_files`, `search_files`, and `save_file` with **scope** an
 
 Tony: `save_file` only with scope `projects`. Keep `save_file` contents under 2000 characters.
 For larger bodies use `save_file_base64` or `append_file` (section by section).
-After creating a project, append its registry entry to `projects/index.md`.
+After creating a project, append a registry block to `projects/index.md` (see Tony project index schema — `##`, `keywords:`, `status:`, `summary:`, `workfile:`).
 Jarvis: read-only — use `read_file` / `list_files` / `search_files` only (no `save_file`).
 """
 

@@ -16,10 +16,8 @@ import fcntl
 import json
 import os
 import re
-from pathlib import Path
-from typing import Optional
 
-from server.paths import ACTIVE_THREADS_PATH
+from server.paths import ACTIVE_THREADS_PATH, PROJECTS_DIR, PROJECTS_INDEX_PATH
 
 THREAD_STATE_PATH = ACTIVE_THREADS_PATH
 
@@ -177,24 +175,91 @@ def _load_index(index_path: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Project matching helpers
+# ---------------------------------------------------------------------------
+
+_STOP_TOKENS = frozenset(
+    {"the", "a", "an", "and", "or", "of", "to", "in", "for", "with", "on", "at", "by"}
+)
+
+
+def _normalize(text: str) -> str:
+    return text.lower().replace("-", " ")
+
+
+def _tokenize(text: str) -> set[str]:
+    tokens: set[str] = set()
+    for word in _normalize(text).split():
+        word = word.strip("#.,!?\"'")
+        if word and word not in _STOP_TOKENS:
+            tokens.add(word)
+    return tokens
+
+
+def _keyword_tokens(keywords: list[str]) -> set[str]:
+    tokens: set[str] = set()
+    for kw in keywords:
+        tokens |= _tokenize(kw)
+    return tokens
+
+
+def similar_projects(
+    proposed_name: str,
+    goal: str = "",
+    index_path: str | None = None,
+) -> list[dict]:
+    """
+    Existing projects likely overlapping proposed_name.
+
+    Strong match: 2+ shared kebab-name tokens.
+    Weak match: 1 shared token plus goal overlap with keywords or summary.
+    Exact name match is excluded (valid continuation).
+    """
+    path = index_path or str(PROJECTS_INDEX_PATH)
+    proposed_tokens = _tokenize(proposed_name)
+    goal_tokens = _tokenize(goal)
+    scored: list[tuple[int, dict]] = []
+
+    for project in _load_index(path):
+        if project["name"].lower() == proposed_name.lower():
+            continue
+
+        shared = proposed_tokens & _tokenize(project["name"])
+        if not shared:
+            continue
+
+        if len(shared) == 1:
+            kw_hit = bool(goal_tokens & _keyword_tokens(project.get("keywords", [])))
+            summary_hit = len(goal_tokens & _tokenize(project.get("summary", ""))) >= 2
+            if not (kw_hit or summary_hit):
+                continue
+
+        scored.append((len(shared), project))
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [project for _, project in scored]
+
+
+# ---------------------------------------------------------------------------
 # Public helpers
 # ---------------------------------------------------------------------------
 
 def keyword_match(
     message_text: str,
-    index_path: str = "projects/index.md",
+    index_path: str | None = None,
 ) -> list[dict]:
     """
     Returns list of projects whose keywords appear in message_text.
     Uses cached index — re-reads only when index.md changes on disk.
     Pure string matching, no model inference.
     """
-    projects = _load_index(index_path)
-    message_lower = message_text.lower()
+    path = index_path or str(PROJECTS_INDEX_PATH)
+    projects = _load_index(path)
+    message_norm = _normalize(message_text)
     matches = []
     for project in projects:
         for keyword in project.get("keywords", []):
-            if keyword.lower() in message_lower:
+            if _normalize(keyword) in message_norm:
                 matches.append(project)
                 break
     return matches
@@ -209,15 +274,15 @@ def get_active_project(thread_ts: str) -> dict | None:
     if not project_name:
         return None
 
-    workfile_path = f"projects/{project_name}/workfile.md"
-    if not os.path.exists(workfile_path):
-        handoff_path = f"projects/{project_name}/handoff.json"
-        if os.path.exists(handoff_path):
+    workfile_path = PROJECTS_DIR / project_name / "workfile.md"
+    if not workfile_path.exists():
+        handoff_path = PROJECTS_DIR / project_name / "handoff.json"
+        if handoff_path.exists():
             with open(handoff_path) as f:
                 return {"project_name": project_name, "handoff": json.load(f)}
         return None
 
-    return {"project_name": project_name, "workfile_path": workfile_path}
+    return {"project_name": project_name, "workfile_path": str(workfile_path)}
 
 
 # ---------------------------------------------------------------------------
@@ -277,7 +342,7 @@ def route(message_text: str, thread_ts: str) -> dict:
         }
 
     # 4. Keyword match — Jarvis surfaces options
-    matches = keyword_match(message_text, "projects/index.md")
+    matches = keyword_match(message_text)
     if matches:
         return {
             "agent":   "jarvis",

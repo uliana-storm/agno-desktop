@@ -1,0 +1,71 @@
+Dev Channel Daily Summary Workflow
+====================================
+Created: 2026-05-26
+Frequency: Daily at 6 AM (Australia/Melbourne)
+
+---
+
+Step 1 — Fetch Digest
+---------------------
+Call fetch_digest with channels="D0B566S8A0N", hours=24, format="blocks"
+This retrieves all #dev channel messages from the past 24 hours.
+
+Step 2 — Extract Action Items
+------------------------------
+Scan digest for:
+• Messages containing "please", "could you", "can someone", "need", "help with"
+• Bulleted lists and numbered tasks within threads
+• Mentions of deliverables or deadlines
+• Direct assignments to specific people
+• Any message marked as a TODO or task
+
+Format each action item as:
+  • [Person/Tag] — Brief description (source: message ID / timestamp)
+
+Step 3 — Extract Emphasized Messages
+-------------------------------------
+Identify messages that are highlighted through:
+• Multiple reactions (>2 emoji reactions on the same thread)
+• Direct replies to a message (thread activity = emphasis)
+• Pinned or bookmarked references
+• Messages with multiple @mentions
+• Urgent language ("ASAP", "critical", "urgent", "need by EOD")
+
+Format each as:
+  • [Author] — Key point (source: thread link / timestamp)
+
+Step 4 — Compare Against Yesterday's Summary
+---------------------------------------------
+Read the previous day's summary from projects/dev-daily-summary-automation/assets/previous-day-summary.md
+Cross-reference today's action items against yesterday's "to-do" list.
+
+Flag completed items with a checkmark or note.
+Note unresolved items that carried over.
+
+Step 5 — Generate Summary Report
+---------------------------------
+Structure:
+
+*Dev Channel Daily Summary — {date}*
+
+*Action Items Identified:*
+• [Person/Tag] — Description (source)
+
+*Emphasized Messages:*
+• [Author] — Key point (source)
+
+*Progress vs Yesterday:*
+• Completed: [list items resolved from yesterday's tasks]
+• In Progress: [items still active]
+• New: [new action items not in previous day]
+
+— Automated by Stormrake
+
+Step 6 — Post Summary to Thread
+--------------------------------
+Post the summary directly into the thread (D0B566S8A0N).
+Use upload_deliverable if generating an HTML report attachment.
+
+Step 7 — Save Previous Day's Summary for Cross-Reference
+----------------------------------------------------------
+Save today's generated summary as assets/previous-day-summary.md in the project directory so tomorrow's run can reference it.

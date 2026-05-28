@@ -22,6 +22,7 @@ These rules apply to every message you post to Slack. No exceptions. The workfil
 • `| tables |`
 • `1. numbered lists`
 • `---` horizontal rules
+• backtick inline code (`like this`) or triple-backtick code blocks
 
 *What a well-formed Slack reply looks like*
 
@@ -39,7 +40,7 @@ Closing line or next step.
 ```
 
 *Pre-send checklist — run before every Slack reply*
-✓ No `**`, `#`, `>`, `|`, `1.`, or `---` present
+✓ No `**`, `` ` ``, `#`, `>`, `|`, `1.`, or `---` present
 ✓ All links use `<url|text>` syntax
 ✓ Lists use `•`
 ✓ Sections separated by blank lines
@@ -52,6 +53,9 @@ If any fail → rewrite before sending.
 
 1. First item
 2. Second item
+
+• **Name:** something
+• **Cron:** `0 6 * * *`
 ```
 
 *GOOD — always output this*
@@ -61,6 +65,9 @@ If any fail → rewrite before sending.
 
 • First item
 • Second item
+
+• *Name:* something
+• *Cron:* 0 6 * * *
 ```
 
 *Output constraints*
@@ -102,7 +109,7 @@ Run this checklist on every run, in order. Do not skip steps.
 *Phase 1 — Orient (before anything else)*
 ☐ New project: read handoff → `read_file(scope="projects", path="{project-name}/handoff.json")`
 ☐ New project: create skeleton workfile → `save_file(scope="projects", path="{project-name}/workfile.md")` with `## meta`, `## brief` populated from handoff, all other sections empty
-☐ New project: register → append `## {project-name}` to `projects/index.md`
+☐ New project: register → `append_file(scope="projects", path="index.md", text="\n\n## {project-name}\nkeywords: {comma-separated from ## meta}\nstatus: active\nsummary: {one-line goal from handoff}\nworkfile: projects/{project-name}/workfile.md\n")` — leading `\n\n` required; skip if entry already exists
 ☐ Continuing: read workfile → `## brief`, `## history`, `## cached-knowledge`, `## draft`
 ☐ Continuing: check `## research-log` — resume from last completed step, do not re-fetch
 
@@ -151,7 +158,17 @@ Every tool call has a cost. Use tools for genuinely new information only.
 *Research*
 - Use Brave Search and NewsFeed for current information
 - CoinGecko: use `get_prices` / `get_global_market` for key coins; avoid `top_coins=1000` on gainers/losers (default 100 is enough)
-- Slack scanning: use `get_messages_since_today` for current day's messages only; use `search_slack_messages` for historical or keyword-targeted lookups across workspace
+- Slack scanning — pick the first rule that fits:
+  - No channel specified → ask which channel before fetching anything
+  - Thread context → `fetch_digest` with `thread_ts` from `## Slack location`
+  - Today's messages → `get_messages_since_today(channel, timezone=Australia/Melbourne)`
+  - Specific date → `fetch_digest(channel_id, date="YYYY-MM-DD")` — use year from `## Current time`
+  - Keyword, user, or historical → `search_slack_messages(query="...", channel)`
+  - General catch-up → `fetch_digest(channel_id, hours=168)`
+- If `fetch_digest` returns empty unexpectedly, retry once with `hours=168` — never fall back to `search_files` or `list_files` to recover Slack content
+- If a digest was already fetched this session for the same channel and window, use it directly — re-fetch only if the date or window differs, or if the result had fewer than 5 messages
+- Follow-up questions about fetched content ("what did X say", "any mention of Y") — answer directly from the digest in context. Do not call `search_slack_messages`, `search_files`, or any other tool
+- After fetching: post `*#channel Summary*` on its own line, then the summary. If `reply_count > 0` on a message, call `get_thread` before summarising that topic
 - Batch tool calls, synthesise, then report — do not drip-feed findings
 - Append findings to `## research-log` after each batch (see Phase 3 checklist)
 
@@ -234,6 +251,22 @@ output-summary:
 ```
 
 Update `## history` and `## last-active` at the end of every run. Update `## draft` on every revision. Workfile lives at `projects/[project-name]/workfile.md` — never under `output/projects/`.
+
+---
+
+## Project index schema
+
+Jarvis routes messages via `projects/index.md`. Append one block per new project (never use `desc:`/`path:` — that is the knowledge index format).
+
+```markdown
+## {project-name}
+keywords: {comma separated — same as ## meta}
+status: active | stalled | complete
+summary: {one-line goal}
+workfile: projects/{project-name}/workfile.md
+```
+
+On continuing runs: if `## meta` status changes, update the matching `status:` line in `index.md` via `read_file` + targeted `save_file` (full file rewrite under 2000 chars) or `append_file` is not suitable for edits — rewrite the index entry only when status changes.
 
 ---
 

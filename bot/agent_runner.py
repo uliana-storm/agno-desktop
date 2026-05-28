@@ -77,6 +77,7 @@ def _stream_agent_run(
     t_last = None
     handoff_project = ""
     was_cancelled = False
+    similarity_gate = False
 
     slack_message_ts = None
     last_slack_update = time.time()
@@ -166,7 +167,9 @@ def _stream_agent_run(
                     )
                 _debug(f"[HANDOFF DEBUG] tool_name: {tool_name}")
                 _debug(f"[HANDOFF DEBUG] tool result: {tool_result[:500]}")
-                if tool_result and "HANDOFF_READY:" in str(tool_result):
+                if tool_result and "SIMILAR_PROJECTS" in str(tool_result):
+                    similarity_gate = True
+                elif tool_result and "HANDOFF_READY:" in str(tool_result):
                     try:
                         handoff_project = str(tool_result).split("HANDOFF_READY:")[1].strip().split()[0]
                         _debug(f"[HANDOFF DEBUG] detected handoff project: {handoff_project}")
@@ -200,7 +203,9 @@ def _stream_agent_run(
             )
         else:
             final_text = full_response.strip() or "_(done)_"
-            if handoff_project:
+            if similarity_gate and not handoff_project:
+                final_text = "Found similar projects — please choose below."
+            elif handoff_project:
                 final_text = format_handoff_slack_message(handoff_project)
         if slack_message_ts:
             try:

@@ -16,6 +16,7 @@ import threading
 import time
 from pathlib import Path
 from time import perf_counter
+from typing import Literal
 
 from dotenv import load_dotenv
 
@@ -95,8 +96,8 @@ from agents.task_context import (
 )
 from bot.agent_runner import cancel_key_for, cancel_run, post_timing_message, run_agent, upload_files
 from bot.jarvis_ack_phrases import random_jarvis_ack
-from bot.router import register_thread, route, unregister_thread
-from server.paths import OUTPUT_DIR, ensure_dirs
+from bot.router import register_thread, route
+from server.paths import OUTPUT_DIR, PROJECTS_DIR, ensure_dirs, similarity_sentinel_path
 
 # ---------------------------------------------------------------------------
 # Config
@@ -126,6 +127,58 @@ def get_bot_user_id(client) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Pending handoff state (similarity disambiguation)
+# ---------------------------------------------------------------------------
+
+_pending_handoffs: dict[str, dict] = {}
+_pending_lock = threading.Lock()
+_PENDING_TTL_SECONDS = 3600
+
+_NEW_PROJECT_RE = re.compile(
+    r"(?i)\b(new project|start new|create new|proceed with new)\b"
+)
+
+
+def _name_in_prompt(name: str, prompt_lower: str) -> bool:
+    return name in prompt_lower or name.replace("-", " ") in prompt_lower
+
+
+def _store_pending(thread_ts: str, pending: dict) -> None:
+    pending["stored_at"] = time.time()
+    with _pending_lock:
+        _pending_handoffs[thread_ts] = pending
+
+
+def _get_pending(thread_ts: str) -> dict | None:
+    with _pending_lock:
+        pending = _pending_handoffs.get(thread_ts)
+        if not pending:
+            return None
+        if time.time() - pending.get("stored_at", 0) > _PENDING_TTL_SECONDS:
+            del _pending_handoffs[thread_ts]
+            return None
+        return pending
+
+
+def _pop_pending(thread_ts: str) -> dict | None:
+    with _pending_lock:
+        return _pending_handoffs.pop(thread_ts, None)
+
+
+def _parse_pending_choice(prompt: str, pending: dict) -> str | None:
+    """Return chosen project_name if prompt is an explicit disambiguation reply."""
+    prompt_lower = prompt.lower()
+    if _NEW_PROJECT_RE.search(prompt_lower):
+        return pending["proposed_name"]
+    for match in sorted(pending["matches"], key=lambda m: len(m["name"]), reverse=True):
+        if _name_in_prompt(match["name"], prompt_lower):
+            return match["name"]
+    if _name_in_prompt(pending["proposed_name"], prompt_lower):
+        return pending["proposed_name"]
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -145,7 +198,7 @@ def prepend_slack_location(
     return loc + "\n\n" + context if context else loc
 
 
-def build_tony_handoff_prompt(project_name: str, handoff_data: dict, user_prompt: str) -> str:
+def build_tony_handoff_prompt(project_name: str) -> str:
     """Build Tony's first prompt after a Jarvis handoff."""
     return (
         f"New project handoff received for '{project_name}'. "
@@ -158,11 +211,145 @@ def build_tony_handoff_prompt(project_name: str, handoff_data: dict, user_prompt
     )
 
 
-def format_project_options(matches: list[dict]) -> str:
-    lines = ["Matched projects from registry:"]
+def _format_project_list(
+    matches: list[dict],
+    *,
+    header: str,
+    slack: bool = False,
+    proposed_name: str | None = None,
+    footer: str | None = None,
+) -> str:
+    lines = [header]
     for m in matches:
-        lines.append(f"- {m['name']} ({m.get('status', 'unknown')}): {m.get('summary', '')}")
+        status = m.get("status", "unknown")
+        summary = m.get("summary", "")
+        if slack:
+            suffix = f" — {summary[:80]}" if summary else ""
+            status_part = f" ({status})" if status else ""
+            lines.append(f"• *{m['name']}*{status_part}{suffix}")
+        else:
+            lines.append(f"- {m['name']} ({status}): {summary}")
+    if proposed_name is not None:
+        lines.extend(["", f"Proposed new project: *{proposed_name}*"])
+    if footer:
+        lines.extend(["", footer])
     return "\n".join(lines)
+
+
+def _post_similarity_disambiguation(
+    client,
+    channel: str,
+    thread_ts: str,
+    proposed_name: str,
+    matches: list[dict],
+) -> None:
+    text = _format_project_list(
+        matches,
+        header="Found similar active projects:",
+        slack=True,
+        proposed_name=proposed_name,
+        footer=(
+            "Reply with an existing project name to continue it, "
+            "or *new project* to proceed with the new one."
+        ),
+    )
+    client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=text)
+
+
+def _dispatch_tony(
+    *,
+    mode: Literal["handoff", "continue"],
+    project_name: str,
+    tony_prompt: str,
+    user_id: str,
+    channel: str,
+    thread_ts: str,
+    client,
+    t0: float,
+    run_key: str,
+    handoff_data: dict | None = None,
+    workfile_path: str = "",
+    register: bool = False,
+) -> None:
+    if register:
+        register_thread(thread_ts, project_name)
+
+    tony_session_id = f"tony-{user_id}-{thread_ts}"
+    additional_context = json.dumps(handoff_data, indent=2) if handoff_data else ""
+    additional_context = prepend_slack_location(
+        additional_context, channel, thread_ts, tony_session_id
+    )
+    additional_context += tony_slack_instructions()
+
+    if not workfile_path:
+        workfile_path = str(PROJECTS_DIR / project_name / "workfile.md")
+
+    tony = create_tony_agent(
+        session_id=tony_session_id,
+        additional_context=additional_context,
+        workfile_path=workfile_path,
+        slack_channel=channel,
+        thread_ts=thread_ts,
+    )
+
+    log_label = "handoff" if mode == "handoff" else "tony"
+
+    def run_tony():
+        start = perf_counter()
+        try:
+            tony_response, tony_files, _, was_cancelled = run_agent(
+                tony, tony_prompt, client, channel, thread_ts,
+                tony_session_id, t0, stream_to_slack=True,
+                cancel_key=run_key,
+            )
+            if was_cancelled:
+                return
+            print(
+                f"[{log_label}] Tony response: {len(tony_response)} chars, files: {tony_files}",
+                flush=True,
+            )
+            post_timing_message(client, channel, thread_ts, perf_counter() - start)
+            if tony_files:
+                upload_files(client, channel, thread_ts, tony_files)
+        except Exception as e:
+            import traceback
+            print(f"[{log_label} error] {e}\n{traceback.format_exc()}", flush=True)
+            client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=f"❌ Error: {e}")
+
+    threading.Thread(target=run_tony, daemon=True).start()
+
+
+def _dispatch_tony_from_pending(
+    pending: dict,
+    project_name: str,
+    user_id: str,
+    channel: str,
+    thread_ts: str,
+    client,
+    t0: float,
+    run_key: str,
+) -> None:
+    params = dict(pending["brief_params"])
+    params["project_name"] = project_name
+
+    project_dir = PROJECTS_DIR / project_name
+    project_dir.mkdir(parents=True, exist_ok=True)
+    with open(project_dir / "handoff.json", "w") as f:
+        json.dump(params, f, indent=2)
+
+    _dispatch_tony(
+        mode="handoff",
+        project_name=project_name,
+        tony_prompt=build_tony_handoff_prompt(project_name),
+        user_id=user_id,
+        channel=channel,
+        thread_ts=thread_ts,
+        client=client,
+        t0=t0,
+        run_key=run_key,
+        handoff_data=params,
+        register=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -190,6 +377,7 @@ def handle_message(body: dict, client, say) -> None:
 
     run_key = cancel_key_for(channel, thread_ts, channel_type)
     if _STOP_RE.match(prompt):
+        _pop_pending(thread_ts)
         if cancel_run(run_key):
             client.chat_postMessage(
                 channel=channel,
@@ -204,6 +392,24 @@ def handle_message(body: dict, client, say) -> None:
             )
         return
 
+    # Pending similarity disambiguation — only when reply is an explicit choice
+    pending = _get_pending(thread_ts)
+    if pending:
+        project_name = _parse_pending_choice(prompt, pending)
+        if project_name is not None:
+            _pop_pending(thread_ts)
+            is_new = project_name == pending["proposed_name"]
+            label = (
+                f"Starting new project *{project_name}*..."
+                if is_new
+                else f"Continuing *{project_name}*..."
+            )
+            client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=label)
+            _dispatch_tony_from_pending(
+                pending, project_name, user_id, channel, thread_ts, client, t0, run_key
+            )
+            return
+
     routing      = route(prompt, thread_ts)
     target_agent = routing["agent"]
     mode         = routing["mode"]
@@ -217,6 +423,7 @@ def handle_message(body: dict, client, say) -> None:
     # ------------------------------------------------------------------
 
     if mode == "project_closed":
+        _pop_pending(thread_ts)
         closed = routing.get("closed_project", "the project")
         client.chat_postMessage(
             channel=channel,
@@ -234,7 +441,6 @@ def handle_message(body: dict, client, say) -> None:
     # ------------------------------------------------------------------
 
     if target_agent == "tony":
-        tony_session_id = f"tony-{user_id}-{thread_ts}"
         ack_text = (
             "Continuing with the project... 🔄"
             if mode == "continue"
@@ -242,45 +448,24 @@ def handle_message(body: dict, client, say) -> None:
         )
         client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=ack_text)
 
-        def process_tony():
-            start = perf_counter()
-            try:
-                workfile_path      = project.get("workfile_path", "") if project else ""
-                additional_context = ""
-                if project and project.get("handoff"):
-                    additional_context = json.dumps(project["handoff"], indent=2)
-                additional_context = prepend_slack_location(
-                    additional_context, channel, thread_ts, tony_session_id
-                )
-                additional_context += tony_slack_instructions()
+        project_name = project.get("project_name", "") if project else ""
+        handoff_data = project.get("handoff") if project else None
+        workfile_path = project.get("workfile_path", "") if project else ""
 
-                tony = create_tony_agent(
-                    session_id=tony_session_id,
-                    additional_context=additional_context,
-                    workfile_path=workfile_path,
-                    slack_channel=channel,
-                    thread_ts=thread_ts,
-                )
-                response, new_files, _, was_cancelled = run_agent(
-                    tony, prompt, client, channel, thread_ts,
-                    tony_session_id, t0, stream_to_slack=True,
-                    cancel_key=run_key,
-                )
-                print(f"\n[Tony] response length: {len(response)} chars", flush=True)
-                if was_cancelled:
-                    return
-                post_timing_message(client, channel, thread_ts, perf_counter() - start)
-                if new_files:
-                    upload_files(client, channel, thread_ts, new_files)
-
-            except Exception as e:
-                import traceback
-                print(f"[tony error] {e}\n{traceback.format_exc()}", flush=True)
-                client.chat_postMessage(
-                    channel=channel, thread_ts=thread_ts, text=f"❌ Error: {e}"
-                )
-
-        threading.Thread(target=process_tony, daemon=True).start()
+        _dispatch_tony(
+            mode="continue",
+            project_name=project_name,
+            tony_prompt=prompt,
+            user_id=user_id,
+            channel=channel,
+            thread_ts=thread_ts,
+            client=client,
+            t0=t0,
+            run_key=run_key,
+            handoff_data=handoff_data,
+            workfile_path=workfile_path,
+            register=False,
+        )
         return
 
     # ------------------------------------------------------------------
@@ -294,7 +479,9 @@ def handle_message(body: dict, client, say) -> None:
     )
 
     if mode == "project_select" and matches:
-        jarvis_context = format_project_options(matches)
+        jarvis_context = _format_project_list(
+            matches, header="Matched projects from registry:"
+        )
         ack_text = "I found some matching projects. Let me help you select one... 🔍"
     else:
         jarvis_context = ""
@@ -330,50 +517,51 @@ def handle_message(body: dict, client, say) -> None:
             if was_cancelled:
                 return
 
-            # ----------------------------------------------------------
-            # Handoff → Tony
-            # ----------------------------------------------------------
-            if handoff_project:
-                register_thread(thread_ts, handoff_project)
-
-                tony_session_id = f"tony-{user_id}-{thread_ts}"
-                handoff_path    = f"projects/{handoff_project}/handoff.json"
-                handoff_data    = {}
-                handoff_context = ""
-
-                if os.path.exists(handoff_path):
-                    with open(handoff_path) as f:
-                        handoff_context = f.read()
-                        handoff_data    = json.loads(handoff_context)
-
-                handoff_context = prepend_slack_location(
-                    handoff_context, channel, thread_ts, tony_session_id
-                )
-                handoff_context += tony_slack_instructions()
-
-                tony = create_tony_agent(
-                    session_id=tony_session_id,
-                    additional_context=handoff_context,
-                    workfile_path=f"projects/{handoff_project}/workfile.md",
-                    slack_channel=channel,
-                    thread_ts=thread_ts,
-                )
-                tony_prompt = build_tony_handoff_prompt(handoff_project, handoff_data, prompt)
-                tony_response, tony_files, _, was_cancelled = run_agent(
-                    tony, tony_prompt, client, channel, thread_ts,
-                    tony_session_id, t0, stream_to_slack=True,
-                    cancel_key=run_key,
-                )
-                if was_cancelled:
-                    return
-                print(
-                    f"[handoff] Tony response: {len(tony_response)} chars, "
-                    f"files: {tony_files}",
-                    flush=True,
-                )
+            sentinel_path = similarity_sentinel_path(thread_ts)
+            if sentinel_path.exists():
+                try:
+                    with open(sentinel_path) as f:
+                        pending = json.load(f)
+                    sentinel_path.unlink()
+                    _store_pending(thread_ts, pending)
+                    _post_similarity_disambiguation(
+                        client,
+                        channel,
+                        thread_ts,
+                        pending["proposed_name"],
+                        pending["matches"],
+                    )
+                    print(
+                        f"[similarity-gate] paused handoff thread={thread_ts} "
+                        f"proposed={pending['proposed_name']} "
+                        f"matches={[m['name'] for m in pending['matches']]}",
+                        flush=True,
+                    )
+                except Exception as e:
+                    import traceback
+                    print(f"[similarity-gate error] {e}\n{traceback.format_exc()}", flush=True)
                 post_timing_message(client, channel, thread_ts, perf_counter() - start)
-                if tony_files:
-                    upload_files(client, channel, thread_ts, tony_files)
+                return
+
+            if handoff_project:
+                handoff_path = PROJECTS_DIR / handoff_project / "handoff.json"
+                handoff_data = {}
+                if handoff_path.exists():
+                    with open(handoff_path) as f:
+                        handoff_data = json.load(f)
+                _dispatch_tony(
+                    mode="handoff",
+                    project_name=handoff_project,
+                    tony_prompt=build_tony_handoff_prompt(handoff_project),
+                    user_id=user_id,
+                    channel=channel,
+                    thread_ts=thread_ts,
+                    client=client,
+                    t0=t0,
+                    run_key=run_key,
+                    handoff_data=handoff_data,
+                    register=True,
+                )
                 return
 
             post_timing_message(client, channel, thread_ts, perf_counter() - start)

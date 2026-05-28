@@ -1,0 +1,61 @@
+# #dev Channel Summary - 26 May 2026
+
+## Overview
+*No prior baseline available for comparison.* 15 messages from the past 24 hours covering build updates, KYC queue monitoring, PR reviews, and Travel Rule implementation discussions.
+
+---
+
+## Action Items & Tasks
+
+### New Action Items
+• Doug → Quyen: Discuss nimbus release planning; reset dev branch back to monitoring commit (1f25ee6d) for a nimbus release candidate in Dev before ZH webhook changes are needed
+• Ankita → George Chondros: Share Associate checklist with comments inline (completed — updated based on feedback)
+• Shelina → Team: Investigate KYC queue monitoring — can't have KYCs left handled for more than an hour
+
+### PR Reviews Requested
+• Gerald Liu → Team: Review SR-631 tightrope deposit status changed handler - https://github.com/stormrake-dev/tightrope/pull/905
+
+---
+
+## Important / Emphasized Messages
+
+**KYC Queue Monitoring Priority** (Doug)
+Must have better monitoring of KYC queue. No KYCs can be left in "handled" for more than an hour. Ankita confirmed she'll keep a closer eye on the queue and escalate as required.
+
+**Trades Not Working - 403 Error** (Shelina, Doug)
+- Trades aren't working yet in dev — received 403 error: "quote_expiry param is not allowed"
+- Shelina found a fix; fixes to be made on articles Gerald's working on
+
+**Nimbus Release Planning** (Doug, Quyen)
+- Doug wants nimbus release candidate in Dev for production release before ZH webhook changes
+- dev backed up to backup/dev/2026-05-26 then reset back to 1f25ee6d201bfda3669fc478faef609635e0babf (monitoring commit)
+
+**Duplicate Wallet Issue - Travel Rule Implementation** (Doug, Shelina)
+- Doug flagged duplicate BTC wallet between two clients: Kate Harris and Julian Jacklin
+- Shelina to add to Travel Rule implementation list — check for active duplicate wallets between individuals/entities as part of SR compliance
+
+**Travel Rule Update** (George Chondros)
+Shared IR knowledge base update on crypto travel rule — https://www.independentreserve.com/blog/knowledge-base/crypto-travel-rule-updates
+
+**Nango Concern Raised** (Doug)
+Mentioned Nango at end of day — potential concern flagged for future discussion.
+
+---
+
+## Status Updates
+
+• Associate checklist shared with George Chondros — comments added, updated based on feedback
+• dev branch backed up to backup/dev/2026-05-26 then reset for nimbus release candidate
+• Doug offsite morning, standup postponed until George arrived; back in office by 14:12
+
+---
+
+## Open Questions / Unresolved Items
+
+• What's the timeline on fixing the trades 403 error? (Shelina found a fix — needs review)
+• When will nimbus be released to production after dev candidate is ready?
+• Travel Rule: need to investigate duplicate wallet check implementation details
+
+---
+
+*Generated automatically from #dev channel activity.*

@@ -6,8 +6,10 @@ Jarvis only. Tony never has this tool.
 """
 
 import json
-import os
 from datetime import datetime
+
+from bot.router import similar_projects
+from server.paths import PROJECTS_DIR, similarity_sentinel_path
 
 
 def handoff_to_tony(
@@ -29,29 +31,17 @@ def handoff_to_tony(
     IMPORTANT: Only call this after the user has said yes, proceed,
     go ahead, or equivalent. Never call speculatively.
 
-    Args:
-        goal:            Clearly stated end goal for the project.
-        success_markers: List of specific, testable success criteria.
-        scope:           "one-off" or "ongoing"
-        dept:            "marketing" | "compliance" | "content" | "other"
-        project_name:    Kebab-case project name you assign.
-                         Example: "affiliate-fitness-q3"
-        constraints:     List of explicit constraints. Pass None if
-                         none were stated.
-        knowledge_refs:  Knowledge file paths explicitly named by the user.
-                         Leave None if unknown — Tony will resolve.
-        task:            Optional task id (e.g. "eod_report_init", "eod_report_adjust").
-        slack_channel:   Slack channel ID where init was requested (for EOD project).
-        thread_ts:       Slack thread ts where init was requested.
+    Always pass slack_channel and thread_ts from ## Slack location.
 
     Returns:
-        Signal string "HANDOFF_READY:{project_name}" for the bot to
-        intercept. Do not interpret this return value yourself.
+        "HANDOFF_READY:{project_name}" — bot dispatches Tony, or
+        "SIMILAR_PROJECTS" — bot reads sentinel and asks user to choose.
+        Do not interpret either return value yourself.
     """
     constraints    = constraints or []
     knowledge_refs = knowledge_refs or []
 
-    brief = {
+    brief_params = {
         "goal":             goal,
         "success_markers":  success_markers,
         "constraints":      constraints,
@@ -63,17 +53,29 @@ def handoff_to_tony(
         "created":          datetime.now().isoformat(),
     }
     if task:
-        brief["task"] = task
+        brief_params["task"] = task
     if slack_channel:
-        brief["slack_channel"] = slack_channel
+        brief_params["slack_channel"] = slack_channel
     if thread_ts:
-        brief["thread_ts"] = thread_ts
+        brief_params["thread_ts"] = thread_ts
 
-    project_dir = f"projects/{project_name}"
-    os.makedirs(project_dir, exist_ok=True)
+    similar = similar_projects(project_name, goal) if thread_ts else []
+    if similar:
+        sentinel = {
+            "proposed_name": project_name,
+            "matches":       similar,
+            "brief_params":  brief_params,
+        }
+        path = similarity_sentinel_path(thread_ts)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(sentinel, f, indent=2)
+        return "SIMILAR_PROJECTS"
 
-    handoff_path = os.path.join(project_dir, "handoff.json")
+    project_dir = PROJECTS_DIR / project_name
+    project_dir.mkdir(parents=True, exist_ok=True)
+    handoff_path = project_dir / "handoff.json"
     with open(handoff_path, "w") as f:
-        json.dump(brief, f, indent=2)
+        json.dump(brief_params, f, indent=2)
 
     return f"HANDOFF_READY:{project_name}"

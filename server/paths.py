@@ -8,6 +8,7 @@ _PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 MEMORY_DIR = _PROJECT_ROOT / "memory"
 OUTPUT_DIR = _PROJECT_ROOT / "output"
 PROJECTS_DIR = _PROJECT_ROOT / "projects"
+PROJECTS_INDEX_PATH = PROJECTS_DIR / "index.md"
 KNOWLEDGE_DIR = _PROJECT_ROOT / "knowledge"
 
 REPORTS_DIR = OUTPUT_DIR / "reports"
@@ -25,6 +26,11 @@ _EXCLUDED_SUFFIXES = {".db"}
 _EXCLUDED_NAMES = {"active_threads.json"}
 
 
+def similarity_sentinel_path(thread_ts: str) -> Path:
+    """Path for a pending similarity-check handoff (keyed by Slack thread_ts)."""
+    return MEMORY_DIR / f"similarity_check_{thread_ts}.json"
+
+
 def ensure_dirs() -> None:
     """Create standard directories if missing."""
     for path in (MEMORY_DIR, OUTPUT_DIR, REPORTS_DIR, PROJECT_SERVER_DIR, PROJECTS_DIR):
@@ -37,6 +43,8 @@ def _is_deliverable(path: Path) -> bool:
     if path.suffix.lower() in _EXCLUDED_SUFFIXES:
         return False
     if path.name in _EXCLUDED_NAMES:
+        return False
+    if path.name.startswith("similarity_check_"):
         return False
     return True
 

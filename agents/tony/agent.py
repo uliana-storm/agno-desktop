@@ -20,7 +20,6 @@ if str(_parent_dir) not in sys.path:
     sys.path.insert(0, str(_parent_dir))
 
 from agno.agent import Agent
-from agno.compression import CompressionManager
 from agno.db.sqlite import SqliteDb  # TODO: upgrade to SqliteStorage when available
 from agno.tools.file_generation import FileGenerationTools
 from agno.tools.function import Function as FunctionTool
@@ -29,8 +28,10 @@ from agno.utils.log import log_info
 from agents.llm_logger import LoggedOpenAILike
 from agents.task_context import melbourne_datetime_context, tony_slack_instructions
 from server.paths import OUTPUT_DIR, REPORTS_DIR, TONY_MEMORY_DB
+from server.selective_compression import SelectiveCompressionManager
 from tools.brave_search_tool import BraveSearchToolkit
 from tools.coingecko_tool import CoinGeckoToolkit
+from tools.create_project_schedule_tool import create_project_schedule
 from tools.feed_fetch_tool import NewsFeedToolkit
 from tools.html_generator import generate_html_from_markdown, generate_html_report
 from tools.python_sandbox import SandboxPythonTools
@@ -181,6 +182,7 @@ def create_tony_agent(
         FunctionTool(name="upload_deliverable",        entrypoint=upload_deliverable),
         FunctionTool(name="generate_html_report",      entrypoint=generate_html_report),
         FunctionTool(name="generate_html_from_markdown", entrypoint=generate_html_from_markdown),
+        FunctionTool(name="create_project_schedule", entrypoint=create_project_schedule),
         tony_scheduler_tools(),
     ]
 
@@ -205,13 +207,14 @@ def create_tony_agent(
         add_session_summary_to_context=False,
         # Memory
         update_memory_on_run=False,
-        # Compression
+        # Compression — token trigger only; large tool results compressed individually
         compress_tool_results=True,
-        compression_manager=CompressionManager(
+        compression_manager=SelectiveCompressionManager(
             compress_token_limit=40_000,
-            compress_tool_results_limit=12,
+            min_chars=2_000,
         ),
         # Misc
+        send_media_to_model=False,  # local llama-server rejects OpenAI type:file content blocks
         add_datetime_to_context=True,
         timezone_identifier="Australia/Melbourne",
         tool_call_limit=50,
